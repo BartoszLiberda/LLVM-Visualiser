@@ -9,7 +9,7 @@ export async function POST(req: Request) {
     }
 
     const llvmOutput = await new Promise<string>((resolve, reject) => {
-        const clang = spawn('clang', ['-S', '-emit-llvm', '-O1', '-x', 'c++', '-o', '-', '-']);
+        const clang = spawn('clang', ['-S', '-emit-llvm', '-O0', '-x', 'c++', '-o', '-', '-']);
 
         let stdoutData = '';
         let stderrData = '';
