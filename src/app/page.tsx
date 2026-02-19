@@ -1,15 +1,118 @@
 "use client";
 
-import Editor from "@monaco-editor/react"
+import Editor, { OnMount, Monaco } from "@monaco-editor/react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
-import { useState } from "react"
-import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit } from "lucide-react"
+import { useState, useRef } from "react"
+import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick } from "lucide-react"
+import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator"
+import RegisterView from "@/components/registerView"
+import MemoryView from "@/components/memoryView"
+
+type MonacoEditor = Parameters<OnMount>[0];
+type EditorDecorationsCollection = ReturnType<NonNullable<MonacoEditor>['createDecorationsCollection']>;
 
 export default function Home() {
   const [inputCode, setInputCode] = useState(`int main() {\n  return 42;\n}`);
-  const [outputCode, setOutputCode] = useState("// Compile to see LLVM here...");
+  const [outputCode, setOutputCode] = useState<string>("// Compile to see LLVM here...");
+
+  const [registers, setRegisters] = useState<Record<string, number>>({})
+  const [memory, setMemory] = useState<Record<string, number>>({})
+  const [logs, setLogs] = useState<string[]>([])
+  const [isFinished, setIsFinished] = useState(false)
+
+  const irEditorRef = useRef<MonacoEditor | null>(null)
+  const sourceEditorRef = useRef<MonacoEditor | null>(null)
+  const monacoRef = useRef<Monaco | null>(null)
+  const irDecorationRef = useRef<EditorDecorationsCollection | null>(null);
+  const simRef = useRef<Simulator | null>(null)
+
+  const resetSimulation = () => {
+    const match = grammar.match(outputCode);
+    if (match.failed()) {
+      toast.error("Unsupported Instruction");
+      return;
+    }
+
+    try {
+      const instructions: Instruction[] = semantics(match).parse();
+
+      if (instructions.length === 0) {
+        toast.warning("No instructions found");
+        return;
+      }
+
+      simRef.current = new Simulator(instructions);
+      setRegisters({});
+      setMemory({});
+      setLogs([]);
+      setIsFinished(false);
+      clearHighlights();
+
+      toast.success("Simulation Reset");
+
+    } catch (err: any) {
+      console.error("Semantic Error:", err);
+      toast.error(`Compiler Error: ${err.message}`);
+    }
+  }
+
+  const step = () => {
+    if (!simRef.current || simRef.current.isFinished) {
+      resetSimulation()
+      if (!simRef.current) {
+        return
+      }
+    }
+    const sim = simRef.current
+    if (!sim) return
+
+    const lineExecuted = sim.step()
+
+    setRegisters({ ...sim.registers })
+    setMemory({ ...sim.memory })
+    setLogs([...sim.logs])
+    setIsFinished(sim.isFinished)
+
+    if (lineExecuted !== null) {
+      highlightLine(lineExecuted)
+    } else {
+      clearHighlights()
+    }
+  }
+
+  const highlightLine = (lineNo: number) => {
+    if (!irEditorRef.current || !monacoRef.current) {
+      return
+    }
+    if (!irDecorationRef.current) {
+      irDecorationRef.current = irEditorRef.current.createDecorationsCollection()
+    }
+    irDecorationRef.current.set([
+      {
+        range: new monacoRef.current.Range(lineNo, 1, lineNo, 1),
+        options: {
+          isWholeLine: true,
+          className: "current-line-highlight"
+        }
+      }
+    ])
+    irEditorRef.current.revealLineInCenter(lineNo);
+  }
+
+  const clearHighlights = () => {
+    irDecorationRef.current?.clear()
+  }
+
+  const handleIRMount: OnMount = (editor, monaco) => {
+    irEditorRef.current = editor
+    monacoRef.current = monaco
+  }
+
+  const handleSourceMount: OnMount = (editor, monaco) => {
+    sourceEditorRef.current = editor
+  }
 
   return (
     <div>
@@ -32,8 +135,10 @@ export default function Home() {
             theme="vs-dark"
             defaultLanguage="cpp"
             value={inputCode}
+            onMount={handleSourceMount}
             onChange={(val) => setInputCode(val ?? "")}
             options={{
+              scrollBeyondLastLine: false,
               minimap: { enabled: false }
             }}
           />
@@ -46,16 +151,26 @@ export default function Home() {
             theme="vs-dark"
             defaultLanguage="ini"
             value={outputCode}
+            onMount={handleIRMount}
             options={{
               readOnly: true,
+              scrollBeyondLastLine: false,
               minimap: { enabled: false }
             }}
           />
         </div>
         <div className="w-1/3">
-          <h1 className="flex items-center gap-2 ml-2 mb-1"><Cpu size={16} />Register View</h1>
-          <div className="h-[70vh] p-1 border-1 outline-white">
-
+          <div className="mb-10">
+            <h1 className="flex items-center gap-2 ml-2 mb-1"><Cpu size={16} />Register View</h1>
+            <div className="h-[31.20vh] p-1 border-1 outline-white">
+              <RegisterView registers={registers} />
+            </div>
+          </div>
+          <div>
+            <h1 className="flex items-center gap-2 ml-2 mb-1"><MemoryStick size={16} />Memory View</h1>
+            <div className="h-[31.20vh] p-1 border-1 outline-white">
+              <MemoryView memory={memory} />
+            </div>
           </div>
         </div>
       </div>
@@ -80,7 +195,13 @@ export default function Home() {
               },
               {
                 loading: "Compiling C++ code...",
-                success: (data) => "Compilation complete!",
+                success: (data) => {
+                  setOutputCode(data.result);
+                  if (outputCode != "// Compile to see LLVM here...") {
+                    resetSimulation()
+                  }
+                  return "Compilation complete!";
+                },
                 error: (err) => `Error: ${err.message}`,
               }
             )
@@ -99,6 +220,15 @@ export default function Home() {
         <Button
           variant="secondary"
           className="cursor-pointer"
+          onClick={() => resetSimulation()}
+        >
+          Reset
+          <RefreshCcw />
+        </Button>
+        <Button
+          variant="secondary"
+          className="cursor-pointer"
+          onClick={() => step()}
         >
           Step
           <SkipForward />

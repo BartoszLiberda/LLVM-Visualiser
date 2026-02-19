@@ -116,6 +116,10 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+.current-line-highlight {
+  background-color: rgba(254, 240, 138, 0.3) !important;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
