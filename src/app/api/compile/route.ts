@@ -33,20 +33,43 @@ export async function POST(req: Request) {
     }
 
     const llvmOutput = await new Promise<string>((resolve, reject) => {
-        const clang = spawn('clang', ['-S', '-emit-llvm', '-O0', '-x', 'c++', '-o', '-', '-'])
-        //TODO : Need to add flags and sanitize input & output (or move over to WebAssembly for security)
+
+        const clang = spawn('clang', [
+            '-S', '-emit-llvm', '-O0', '-x', 'c++',
+            '-fno-crash-diagnostics',
+            '-ferror-limit=10',
+            '-ftemplate-depth=128',
+            '-fconstexpr-depth=128',
+            '-fno-caret-diagnostics',
+            '-o', '-', '-'
+        ])
+
+        const timeout = setTimeout(() => {
+            clang.kill('SIGKILL')
+            resolve('Error: Compilation Timed Out (Max 5s)')
+        }, 5000)
+
         let stdoutData = ''
         let stderrData = ''
 
         clang.stdout.on('data', (data) => {
             stdoutData += data.toString()
+            if (stdoutData.length > 1024 * 1024) {
+                clang.kill('SIGKILL')
+                resolve('Error: Output Size Exceeded')
+            }
         })
 
         clang.stderr.on('data', (data) => {
             stderrData += data.toString()
+            if (stderrData.length > 1024 * 1024) {
+                clang.kill('SIGKILL')
+                resolve('Error: Error Output Size Exceeded')
+            }
         })
 
         clang.on('close', (code) => {
+            clearTimeout(timeout)
             if (code === 0) {
                 resolve(cleanupIR(stdoutData))
             } else {
@@ -55,6 +78,7 @@ export async function POST(req: Request) {
         })
 
         clang.on('error', (err) => {
+            clearTimeout(timeout)
             reject(err)
         })
 

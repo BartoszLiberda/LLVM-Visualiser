@@ -33,8 +33,8 @@ export default function Home() {
   const irDecorationRef = useRef<EditorDecorationsCollection | null>(null);
   const simRef = useRef<Simulator | null>(null)
 
-  const resetSimulation = () => {
-    const match = grammar.match(outputCode);
+  const resetSimulation = (optionalCode?: string) => {
+    const match = grammar.match(optionalCode ?? outputCode);
     if (match.failed()) {
       toast.error("Unsupported Instruction");
       return;
@@ -276,8 +276,8 @@ export default function Home() {
                   loading: "Compiling C++ code...",
                   success: (data) => {
                     setOutputCode(data.result);
-                    if (outputCode != "// Compile to see LLVM here...") {
-                      resetSimulation()
+                    if (data.result != "// Compile to see LLVM here...") {
+                      resetSimulation(data.result)
                     }
                     return "Compilation complete!";
                   },
