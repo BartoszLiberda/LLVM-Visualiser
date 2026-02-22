@@ -12,35 +12,39 @@ export default function RegisterView({ registers }: RegisterViewProps) {
     }));
 
     return (
-        <ScrollArea className="h-[30vh]">
+        <div className="flex flex-col h-full">
             <Table>
                 <TableHeader>
                     <TableRow>
-                        <TableHead>Register</TableHead>
-                        <TableHead>Value</TableHead>
+                        <TableHead className="w-1/2">Register</TableHead>
+                        <TableHead className="w-1/2">Value</TableHead>
                     </TableRow>
                 </TableHeader>
-                <TableBody>
-                    {data.length === 0 ? (
-                        <TableRow>
-                            <TableCell colSpan={2} className="h-[25vh] text-center text-muted-foreground">
-                                No registers active
-                            </TableCell>
-                        </TableRow>
-                    ) : (
-                        data.map((reg) => (
-                            <TableRow key={reg.name}>
-                                <TableCell>
-                                    {reg.name}
-                                </TableCell>
-                                <TableCell>
-                                    {reg.value}
+            </Table>
+            <ScrollArea className="flex-1 min-h-0">
+                <Table>
+                    <TableBody>
+                        {data.length === 0 ? (
+                            <TableRow>
+                                <TableCell colSpan={2} className="flex-1 min-h-0 text-center text-muted-foreground">
+                                    No registers active
                                 </TableCell>
                             </TableRow>
-                        ))
-                    )}
-                </TableBody>
-            </Table>
-        </ScrollArea>
+                        ) : (
+                            data.map((reg) => (
+                                <TableRow key={reg.name}>
+                                    <TableCell className="w-1/2">
+                                        {reg.name}
+                                    </TableCell>
+                                    <TableCell className="w-1/2">
+                                        {reg.value >= 0x7000 ? `0x${reg.value.toString(16)}` : reg.value}
+                                    </TableCell>
+                                </TableRow>
+                            ))
+                        )}
+                    </TableBody>
+                </Table>
+            </ScrollArea>
+        </div>
     )
 }

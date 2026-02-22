@@ -7,40 +7,44 @@ interface MemoryTableProps {
 
 export default function MemoryView({ memory }: MemoryTableProps) {
     const data = Object.entries(memory).map(([address, value]) => ({
-        address,
+        memoryAddress: address,
         value
     }))
 
     return (
-        <ScrollArea className="h-[30vh]">
+        <div className="flex flex-col h-full">
             <Table>
                 <TableHeader>
                     <TableRow>
-                        <TableHead>Address</TableHead>
-                        <TableHead>Value</TableHead>
+                        <TableHead className="w-1/2">Address</TableHead>
+                        <TableHead className="w-1/2">Value</TableHead>
                     </TableRow>
                 </TableHeader>
-                <TableBody>
-                    {data.length === 0 ? (
-                        <TableRow>
-                            <TableCell colSpan={2} className="h-[25vh] text-center text-muted-foreground">
-                                Memory Empty
-                            </TableCell>
-                        </TableRow>
-                    ) : (
-                        data.map((row) => (
-                            <TableRow key={row.address}>
-                                <TableCell>
-                                    {row.address}
-                                </TableCell>
-                                <TableCell>
-                                    {row.value}
+            </Table>
+            <ScrollArea className="flex-1 min-h-0">
+                <Table>
+                    <TableBody>
+                        {data.length === 0 ? (
+                            <TableRow>
+                                <TableCell colSpan={2} className="flex-1 min-h-0 text-center text-muted-foreground">
+                                    Memory Empty
                                 </TableCell>
                             </TableRow>
-                        ))
-                    )}
-                </TableBody>
-            </Table>
-        </ScrollArea>
+                        ) : (
+                            data.map((row) => (
+                                <TableRow key={row.memoryAddress}>
+                                    <TableCell className="w-1/2">
+                                        0x{parseInt(row.memoryAddress).toString(16)}
+                                    </TableCell>
+                                    <TableCell className="w-1/2">
+                                        {row.value}
+                                    </TableCell>
+                                </TableRow>
+                            ))
+                        )}
+                    </TableBody>
+                </Table>
+            </ScrollArea>
+        </div>
     )
 }
