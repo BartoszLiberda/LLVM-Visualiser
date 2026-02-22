@@ -5,10 +5,12 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
 import { useState, useRef } from "react"
-import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs } from "lucide-react"
+import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal } from "lucide-react"
 import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
+import { Slider } from "@/components/ui/slider"
+import { useAutoScroll } from "@/lib/utils";
 import RegisterView from "@/components/registerView"
 import MemoryView from "@/components/memoryView"
 
@@ -22,6 +24,7 @@ export default function Home() {
   const [registers, setRegisters] = useState<Record<string, number>>({})
   const [memory, setMemory] = useState<Record<string, number>>({})
   const [logs, setLogs] = useState<string[]>([])
+  const [pc, setPc] = useState(0)
   const [isFinished, setIsFinished] = useState(false)
 
   const irEditorRef = useRef<MonacoEditor | null>(null)
@@ -49,6 +52,7 @@ export default function Home() {
       setRegisters({});
       setMemory({});
       setLogs([]);
+      setPc(0);
       setIsFinished(false);
       clearHighlights();
 
@@ -60,27 +64,66 @@ export default function Home() {
     }
   }
 
-  const step = () => {
-    if (!simRef.current || simRef.current.isFinished) {
+  const step = (targetSteps?: number) => {
+    let sim = simRef.current
+    if (!sim) {
       resetSimulation()
-      if (!simRef.current) {
+      return
+    }
+
+    if (sim.isFinished && targetSteps === undefined) {
+      resetSimulation()
+      return
+    }
+
+    let targetPc = targetSteps !== undefined ? targetSteps : sim.pc + 1
+
+    let shouldResetLogs = false
+    if (targetPc < sim.pc) {
+      const match = grammar.match(outputCode)
+      if (match.failed()) return
+      try {
+        const instructions = semantics(match).parse()
+        sim = new Simulator(instructions)
+        simRef.current = sim
+        shouldResetLogs = true
+      } catch (err) {
         return
       }
     }
-    const sim = simRef.current
-    if (!sim) return
 
-    const lineExecuted = sim.step()
+    const logsToAdd: string[] = []
+    let lastLineExecuted: number | null = null
+
+    while (sim.pc < targetPc && !sim.isFinished) {
+      const currentPc = sim.pc
+      const prevLogsLength = sim.logs.length
+
+      const lineExecuted = sim.step()
+      if (lineExecuted !== null) {
+        lastLineExecuted = lineExecuted
+      }
+
+      const newLogs = sim.logs.slice(prevLogsLength).map(log => `Line ${currentPc + 2}: ${log}`)
+      logsToAdd.push(...newLogs)
+    }
 
     setRegisters({ ...sim.registers })
     setMemory({ ...sim.memory })
-    setLogs([...sim.logs])
+
+    if (shouldResetLogs) {
+      setLogs(logsToAdd)
+    } else {
+      setLogs(prev => [...prev, ...logsToAdd])
+    }
+
+    setPc(sim.pc)
     setIsFinished(sim.isFinished)
 
-    if (lineExecuted !== null) {
-      highlightLine(lineExecuted)
-    } else {
+    if (sim.pc === 0) {
       clearHighlights()
+    } else if (lastLineExecuted !== null) {
+      highlightLine(lastLineExecuted)
     }
   }
 
@@ -199,6 +242,7 @@ export default function Home() {
                       {log}
                     </div>
                   ))}
+                  <div ref={useAutoScroll(logs.length, true)}></div>
                 </ScrollArea>
               </div>
             </ResizablePanel>
@@ -208,55 +252,68 @@ export default function Home() {
 
       <Separator className="shrink-0" />
 
-      <div className="flex gap-5 p-10 shrink-0">
-        <Button
-          variant="secondary"
-          className="cursor-pointer"
-          onClick={() => {
-            toast.promise(
-              async () => {
-                const response = await fetch("/api/compile", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ code: inputCode }),
-                });
-                const data = await response.json();
-                if (!response.ok) {
-                  throw new Error(data.error || "Server Error");
-                }
-                setOutputCode(data.result);
-                return data;
-              },
-              {
-                loading: "Compiling C++ code...",
-                success: (data) => {
-                  setOutputCode(data.result);
-                  if (outputCode != "// Compile to see LLVM here...") {
-                    resetSimulation()
+      <div className="flex flex-col xl:flex-row justify-between items-center p-6 md:p-8 shrink-0 gap-6">
+        <div className="flex flex-wrap justify-center gap-3 md:gap-5 w-full xl:w-auto">
+          <Button
+            variant="secondary"
+            className="cursor-pointer"
+            onClick={() => {
+              toast.promise(
+                async () => {
+                  const response = await fetch("/api/compile", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ code: inputCode }),
+                  });
+                  const data = await response.json();
+                  if (!response.ok) {
+                    throw new Error(data.error || "Server Error");
                   }
-                  return "Compilation complete!";
+                  setOutputCode(data.result);
+                  return data;
                 },
-                error: (err) => `Error: ${err.message}`,
-              }
-            )
-          }}
-        >
-          Compile
-          <Hammer />
-        </Button>
-        <Button variant="secondary" className="cursor-pointer">
-          Run
-          <Play />
-        </Button>
-        <Button variant="secondary" className="cursor-pointer" onClick={() => step()}>
-          Step
-          <SkipForward />
-        </Button>
-        <Button variant="secondary" className="cursor-pointer" onClick={() => resetSimulation()}>
-          Reset
-          <RefreshCcw />
-        </Button>
-      </div>
+                {
+                  loading: "Compiling C++ code...",
+                  success: (data) => {
+                    setOutputCode(data.result);
+                    if (outputCode != "// Compile to see LLVM here...") {
+                      resetSimulation()
+                    }
+                    return "Compilation complete!";
+                  },
+                  error: (err) => `Error: ${err.message}`,
+                }
+              )
+            }}
+          >
+            Compile
+            <Hammer />
+          </Button>
+          <Button variant="secondary" className="cursor-pointer" onClick={() => step(simRef.current?.instructions.length)}>
+            Run
+            <Play />
+          </Button>
+          <Button variant="secondary" className="cursor-pointer" onClick={() => step()}>
+            Step
+            <SkipForward />
+          </Button>
+          <Button variant="secondary" className="cursor-pointer" onClick={() => resetSimulation()}>
+            Reset
+            <RefreshCcw />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-3 pb-3 w-full max-w-md xl:w-1/3">
+          <h1 className="flex items-center gap-2"><GitCommitHorizontal size={16} />{`Step: ${pc}`}</h1>
+          <Slider
+            value={[pc]}
+            onValueChange={(val) => step(val[0])}
+            min={0}
+            max={simRef.current?.instructions.length ?? 0}
+            step={1}
+            className="cursor-grab"
+          />
+        </div>
+      </div >
     </div >
   );
 }

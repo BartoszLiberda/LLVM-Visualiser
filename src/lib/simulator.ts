@@ -130,7 +130,7 @@ export class Simulator {
             this.isFinished = true;
         }
 
-        if (!this.isFinished) this.pc++;
+        this.pc++;
         return inst.line;
     }
 }

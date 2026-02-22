@@ -6,8 +6,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-// For Future Iteration 
-
 export const useAutoScroll = (dependency: any, autoScroll: boolean) => {
   const ref = useRef<HTMLDivElement>(null)
 
