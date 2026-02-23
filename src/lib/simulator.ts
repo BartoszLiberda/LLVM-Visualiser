@@ -20,7 +20,7 @@ export interface SimulationResult {
 export const grammar = ohm.grammar(`
     LLVM {
         Program = FunctionDef+
-        FunctionDef = "define" Type globalName "(" Params ")" Attribute* "{" Instruction* "}"
+        FunctionDef = "define" RetAttr* Type globalName "(" Params ")" Attribute* "{" Instruction* "}"
 
         Instruction = Assignment | AllocaInst | StoreInst | LoadInst | ReturnInst
 
@@ -141,7 +141,7 @@ semantics.addOperation<any>('parse', {
     Program(funcs) {
         return funcs.children[0].parse();
     },
-    FunctionDef(_def, _ret, _name, _lp, _params, _rp, _attrs, _lb, body, _rb) {
+    FunctionDef(_def, _retAttrs, _type, _name, _lp, _params, _rp, _attrs, _lb, body, _rb) {
         return body.children.map((c: any) => c.parse());
     },
     Instruction(inst) {
