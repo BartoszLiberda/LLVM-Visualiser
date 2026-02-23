@@ -35,7 +35,8 @@ export async function POST(req: Request) {
     const llvmOutput = await new Promise<string>((resolve, reject) => {
 
         const clang = spawn('clang', [
-            '-S', '-emit-llvm', '-target arm64-apple-darwin25.2.0', '-O0', '-x', 'c++',
+            '-S', '-emit-llvm', '-O0', '-x', 'c++',
+            '-target', 'arm64-apple-darwin25.2.0',
             '-fno-crash-diagnostics',
             '-ferror-limit=10',
             '-ftemplate-depth=128',
