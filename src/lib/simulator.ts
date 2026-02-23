@@ -34,6 +34,8 @@ export const grammar = ohm.grammar(`
         Operand = register | number | bool | nullConst
         Type = typeBase "*"*
         typeBase = intType | "ptr" | "void"
+
+        RetAttr = "noundef" | "signext" | "zeroext" | "inreg"
         
         // Lexical rules (no implicit space skipping inside)
         intType = "i" digit+
@@ -48,7 +50,7 @@ export const grammar = ohm.grammar(`
         nullConst = "null"
 
         Params = listOf<Param, ",">
-        Param = Type register?
+        Param = Type RetAttr* register?
         Attribute = attrNumeric | "nounwind" | "uwtable" | "noinline" | "optnone"
         attrNumeric = "#" digit+
     }
