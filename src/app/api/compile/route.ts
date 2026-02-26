@@ -26,10 +26,16 @@ function cleanupIR(ir: string): string {
 }
 
 export async function POST(req: Request) {
-    const { code } = await req.json()
+    const body = await req.json().catch(() => ({}))
+    let { code } = body
 
-    if (!code) {
+    if (!code || typeof code !== 'string') {
         return NextResponse.json({ error: 'No code provided' }, { status: 400 })
+    }
+
+    // SSTI Mitigation: Sanitize user input by rejecting template-like constructs
+    if (code.includes('{{') || code.includes('}}') || code.includes('<%') || code.includes('%>') || code.includes('${')) {
+        return NextResponse.json({ error: 'Template injection patterns detected in input' }, { status: 400 })
     }
 
     const llvmOutput = await new Promise<string>((resolve, reject) => {
