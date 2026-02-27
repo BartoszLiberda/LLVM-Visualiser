@@ -8,6 +8,10 @@ export type Instruction =
     | { type: "LOAD"; line: number; dest: string; ptr: string }
     | { type: "RET"; line: number; val: Operand | null }
     | { type: 'ALLOCA'; line: number; dest: string }
+    | { type: 'ICMP'; line: number; dest: string; cond: string; val1: Operand; val2: Operand }
+    | { type: 'BR_COND'; line: number; cond: Operand; iftrue: string; iffalse: string }
+    | { type: 'BR_UNCOND'; line: number; dest: string }
+    | { type: 'LABEL'; line: number; name: string }
 
 export interface SimulationResult {
     success: boolean
@@ -22,15 +26,20 @@ export const grammar = ohm.grammar(`
         Program = FunctionDef+
         FunctionDef = "define" RetAttr* Type globalName "(" Params ")" Attribute* "{" Instruction* "}"
 
-        Instruction = Assignment | AllocaInst | StoreInst | LoadInst | ReturnInst
+        Instruction = LabelDef | Assignment | AllocaInst | StoreInst | LoadInst | ReturnInst | IcmpInst | BrInst
 
+        LabelDef = labelName ":"
         Assignment = register "=" Op Type Operand "," Operand
         AllocaInst = register "=" "alloca" Type ("," "align" number)?
         StoreInst = "store" Type Operand "," Type register ("," "align" number)?
         LoadInst = register "=" "load" Type "," Type register ("," "align" number)?
         ReturnInst = "ret" Type Operand?
+        IcmpInst = register "=" "icmp" CmpPredicate Type Operand "," Operand
+        BrInst = "br" "i1" Operand "," "label" "%" labelName "," "label" "%" labelName  -- cond
+               | "br" "label" "%" labelName                                             -- uncond
 
         Op = "add" | "sub" | "mul" | "sdiv"
+        CmpPredicate = "eq" | "ne" | "sgt" | "sge" | "slt" | "sle"
         Operand = register | number | bool | nullConst
         Type = typeBase "*"*
         typeBase = intType | "ptr" | "void"
@@ -38,9 +47,12 @@ export const grammar = ohm.grammar(`
         RetAttr = "noundef" | "signext" | "zeroext" | "inreg"
         
         // Lexical rules (no implicit space skipping inside)
+        comment = ";" (~"\\n" any)* "\\n"?
+        space += comment
         intType = "i" digit+
         register = "%" (alnum | "_" | "." | "-")+
         globalName = "@" (alnum | "_" | "." | "-")+
+        labelName = (alnum | "_" | "." | "-")+
         
         number = hexNumber | decNumber
         hexNumber = "-"? "0x" hexDigit+
@@ -63,6 +75,7 @@ export class Simulator {
     memory: Record<number, number>
     logs: string[]
     isFinished: boolean
+    labelMap: Record<string, number>
 
     constructor(instructions: Instruction[]) {
         this.instructions = instructions
@@ -71,6 +84,14 @@ export class Simulator {
         this.memory = {}
         this.logs = []
         this.isFinished = false;
+
+        this.labelMap = {}
+        for (let i = 0; i < instructions.length; i++) {
+            const inst = instructions[i];
+            if (inst.type === 'LABEL') {
+                this.labelMap[inst.name] = i;
+            }
+        }
     }
 
     private resolve(operand: Operand): number {
@@ -91,12 +112,13 @@ export class Simulator {
                     const v1 = this.resolve(inst.val1);
                     const v2 = this.resolve(inst.val2);
                     let res = 0;
-                    if (inst.op === 'add') res = v1 + v2;
-                    else if (inst.op === 'sub') res = v1 - v2;
-                    else if (inst.op === 'mul') res = v1 * v2;
-                    else if (inst.op === 'sdiv') res = Math.trunc(v1 / v2);
+                    let opStr = '';
+                    if (inst.op === 'add') { res = v1 + v2; opStr = '+'; }
+                    else if (inst.op === 'sub') { res = v1 - v2; opStr = '-'; }
+                    else if (inst.op === 'mul') { res = v1 * v2; opStr = '*'; }
+                    else if (inst.op === 'sdiv') { res = Math.trunc(v1 / v2); opStr = '/'; }
                     this.registers[inst.dest] = res;
-                    this.logs.push(`${inst.dest} = ${res}`);
+                    this.logs.push(`Calculated ${v1} ${opStr} ${v2} = ${res} (stored in ${inst.dest})`);
                     break;
                 }
                 case 'ALLOCA': {
@@ -117,7 +139,7 @@ export class Simulator {
                     const ptr = this.resolve(inst.ptr);
                     const val = this.memory[ptr] ?? 0;
                     this.registers[inst.dest] = val;
-                    this.logs.push(`Loaded ${val} from 0x${ptr.toString(16)}`)
+                    this.logs.push(`Loaded ${val} from 0x${ptr.toString(16)} (into ${inst.dest})`);
                     break;
                 }
                 case 'RET': {
@@ -125,6 +147,46 @@ export class Simulator {
                     this.logs.push(`Exit with code: ${val}`);
                     this.isFinished = true;
                     break;
+                }
+                case 'LABEL': {
+                    break;
+                }
+                case 'ICMP': {
+                    const v1 = this.resolve(inst.val1);
+                    const v2 = this.resolve(inst.val2);
+                    let res = false;
+                    let opStr = '';
+                    switch (inst.cond) {
+                        case 'eq': res = v1 === v2; opStr = '=='; break;
+                        case 'ne': res = v1 !== v2; opStr = '!='; break;
+                        case 'sgt': res = v1 > v2; opStr = '>'; break;
+                        case 'sge': res = v1 >= v2; opStr = '>='; break;
+                        case 'slt': res = v1 < v2; opStr = '<'; break;
+                        case 'sle': res = v1 <= v2; opStr = '<='; break;
+                    }
+                    this.registers[inst.dest] = res ? 1 : 0;
+                    this.logs.push(`Compared ${v1} ${opStr} ${v2} -> ${res} (stored in ${inst.dest})`);
+                    break;
+                }
+                case 'BR_COND': {
+                    const condVal = this.resolve(inst.cond);
+                    const target = condVal !== 0 ? inst.iftrue : inst.iffalse;
+                    if (target in this.labelMap) {
+                        this.pc = this.labelMap[target];
+                        this.logs.push(`Branching to %${target}`);
+                        return inst.line;
+                    } else {
+                        throw new Error(`Label %${target} not found`);
+                    }
+                }
+                case 'BR_UNCOND': {
+                    if (inst.dest in this.labelMap) {
+                        this.pc = this.labelMap[inst.dest];
+                        this.logs.push(`Branching to %${inst.dest}`);
+                        return inst.line;
+                    } else {
+                        throw new Error(`Label %${inst.dest} not found`);
+                    }
                 }
             }
         } catch (e: any) {
@@ -149,6 +211,13 @@ semantics.addOperation<any>('parse', {
     Instruction(inst) {
         return inst.parse();
     },
+    LabelDef(name, _colon) {
+        return {
+            type: 'LABEL',
+            line: this.source.getLineAndColumn().lineNum,
+            name: name.sourceString
+        };
+    },
     Assignment(dest, _eq, op, _type, val1, _comma, val2) {
         return {
             type: 'ASSIGNMENT',
@@ -157,6 +226,32 @@ semantics.addOperation<any>('parse', {
             op: op.sourceString,
             val1: val1.parse(),
             val2: val2.parse()
+        };
+    },
+    IcmpInst(dest, _eq, _icmp, cond, _type, val1, _comma, val2) {
+        return {
+            type: 'ICMP',
+            line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString,
+            cond: cond.sourceString,
+            val1: val1.parse(),
+            val2: val2.parse()
+        };
+    },
+    BrInst_cond(_br, _i1, cond, _c1, _label1, _percent1, iftrue, _c2, _label2, _percent2, iffalse) {
+        return {
+            type: 'BR_COND',
+            line: this.source.getLineAndColumn().lineNum,
+            cond: cond.parse(),
+            iftrue: iftrue.sourceString,
+            iffalse: iffalse.sourceString
+        };
+    },
+    BrInst_uncond(_br, _label, _percent, dest) {
+        return {
+            type: 'BR_UNCOND',
+            line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString
         };
     },
     AllocaInst(dest, _eq, _alloca, _type, _c, _ak, _an) {
