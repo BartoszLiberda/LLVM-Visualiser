@@ -1,11 +1,13 @@
 "use client";
 
+import Image from "next/image"
+
 import Editor, { OnMount, Monaco } from "@monaco-editor/react"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
 import { useState, useRef } from "react"
-import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal } from "lucide-react"
+import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser } from "lucide-react"
 import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
@@ -13,12 +15,30 @@ import { Slider } from "@/components/ui/slider"
 import { useAutoScroll } from "@/lib/utils";
 import RegisterView from "@/components/registerView"
 import MemoryView from "@/components/memoryView"
+import {
+  Menubar,
+  MenubarCheckboxItem,
+  MenubarContent,
+  MenubarGroup,
+  MenubarItem,
+  MenubarMenu,
+  MenubarRadioGroup,
+  MenubarRadioItem,
+  MenubarSeparator,
+  MenubarShortcut,
+  MenubarSub,
+  MenubarSubContent,
+  MenubarSubTrigger,
+  MenubarTrigger,
+} from "@/components/ui/menubar"
+import { useTheme } from "next-themes";
 
 type MonacoEditor = Parameters<OnMount>[0];
 type EditorDecorationsCollection = ReturnType<NonNullable<MonacoEditor>['createDecorationsCollection']>;
 
 export default function Home() {
-  const [inputCode, setInputCode] = useState(`int main() {\n  return 42;\n}`);
+  const { theme, setTheme, resolvedTheme } = useTheme();
+  const [inputCode, setInputCode] = useState(`int main() {\n  return 1;\n}`);
   const [outputCode, setOutputCode] = useState<string>("// Compile to see LLVM here...");
 
   const [registers, setRegisters] = useState<Record<string, number>>({})
@@ -32,6 +52,7 @@ export default function Home() {
   const monacoRef = useRef<Monaco | null>(null)
   const irDecorationRef = useRef<EditorDecorationsCollection | null>(null);
   const simRef = useRef<Simulator | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const resetSimulation = (optionalCode?: string) => {
     const match = grammar.match(optionalCode ?? outputCode);
@@ -159,17 +180,102 @@ export default function Home() {
     sourceEditorRef.current = editor
   }
 
-  return (
-    <div className="flex flex-col h-screen overflow-hidden">
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+  }
 
-      <div className="flex justify-between items-center ml-10 mr-10 mt-5 shrink-0">
-        <h1 className='text-3xl font-extrabold tracking-tight text-balance'>LLVM Visualiser</h1>
-        <a href="https://github.com/BartoszLiberda/LLVM-Visualiser">
-          <Button variant="secondary" className="cursor-pointer">
-            <FolderGit />
-            Project Repo
-          </Button>
-        </a>
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0]
+      try {
+        const text = await file.text()
+        setInputCode(text)
+      } catch (err) {
+        console.error("Error reading file:", err)
+        toast.error("Error reading file")
+      }
+    }
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      try {
+        const text = await file.text()
+        setInputCode(text)
+      } catch (err) {
+        console.error("Error reading file:", err)
+        toast.error("Error reading file")
+      }
+    }
+    if (e.target) {
+      e.target.value = ""
+    }
+  }
+
+  return (
+    <div onDragOver={handleDragOver} onDrop={handleDrop} className="flex flex-col h-screen overflow-hidden">
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        className="hidden"
+        accept=".cpp"
+      />
+
+      <div className="flex gap-10 items-center ml-10 mr-10 mt-5 shrink-0">
+        <div className="flex gap-2 items-center">
+          <Image
+            src="/LLVMLogo.svg"
+            alt="LLVM Logo"
+            width={30}
+            height={30}
+            className="dark:invert-0 invert"
+            priority
+          />
+          <h1 className="text-3xl font-extrabold tracking-tight text-balance">Visualiser</h1>
+        </div>
+        <Menubar>
+          <MenubarMenu>
+            <MenubarTrigger>Code</MenubarTrigger>
+            <MenubarContent>
+              <MenubarItem onClick={() => fileInputRef.current?.click()}><Upload />Upload</MenubarItem>
+              <MenubarItem onClick={() => setInputCode(`int main() {\n  return 1;\n}`)}><Eraser />Clear</MenubarItem>
+            </MenubarContent>
+          </MenubarMenu>
+          <MenubarMenu>
+            <MenubarTrigger>Controls</MenubarTrigger>
+            <MenubarContent>
+              <MenubarItem><Hammer />Compile</MenubarItem>
+              <MenubarItem><SkipForward />Step</MenubarItem>
+              <MenubarItem onClick={() => step(simRef.current?.instructions.length)}><Play />Run</MenubarItem>
+              <MenubarItem><RefreshCcw />Reset</MenubarItem>
+            </MenubarContent>
+          </MenubarMenu>
+          <MenubarMenu>
+            <MenubarTrigger>Theme</MenubarTrigger>
+            <MenubarContent>
+              <MenubarRadioGroup value={theme} onValueChange={setTheme}>
+                <MenubarRadioItem value="light">Light</MenubarRadioItem>
+                <MenubarRadioItem value="dark">Dark</MenubarRadioItem>
+                <MenubarRadioItem value="system">System</MenubarRadioItem>
+              </MenubarRadioGroup>
+            </MenubarContent>
+          </MenubarMenu>
+          <MenubarMenu>
+            <MenubarTrigger>Info</MenubarTrigger>
+            <MenubarContent>
+              <a href="https://github.com/BartoszLiberda/LLVM-Visualiser">
+                <MenubarItem><FolderGit />Project Repo</MenubarItem>
+              </a>
+              <a href="https://llvm.org/docs/">
+                <MenubarItem><FileText />LLVM Documentation</MenubarItem>
+              </a>
+            </MenubarContent>
+          </MenubarMenu>
+        </Menubar>
       </div>
 
       <Separator className="mt-5 shrink-0" />
@@ -182,7 +288,7 @@ export default function Home() {
             <Editor
               className="p-1"
               height="98%"
-              theme="vs-dark"
+              theme={resolvedTheme === "light" ? "vs" : "vs-dark"}
               defaultLanguage="cpp"
               value={inputCode}
               onMount={handleSourceMount}
@@ -201,7 +307,7 @@ export default function Home() {
             <Editor
               className="p-1"
               height="98%"
-              theme="vs-dark"
+              theme={resolvedTheme === "light" ? "vs" : "vs-dark"}
               defaultLanguage="ini"
               value={outputCode}
               onMount={handleIRMount}
