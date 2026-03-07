@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
 import { useState, useRef } from "react"
-import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser } from "lucide-react"
+import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser, MessageSquare } from "lucide-react"
 import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 import { useAutoScroll } from "@/lib/utils";
 import RegisterView from "@/components/registerView"
@@ -39,7 +40,7 @@ type EditorDecorationsCollection = ReturnType<NonNullable<MonacoEditor>['createD
 export default function Home() {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [inputCode, setInputCode] = useState(`int main() {\n  return 1;\n}`);
-  const [outputCode, setOutputCode] = useState<string>("// Compile to see LLVM here...");
+  const [outputCode, setOutputCode] = useState<string>("; Compile to see LLVM here...");
 
   const [registers, setRegisters] = useState<Record<string, number>>({})
   const [memory, setMemory] = useState<Record<string, number>>({})
@@ -88,11 +89,6 @@ export default function Home() {
   const step = (targetSteps?: number) => {
     let sim = simRef.current
     if (!sim) {
-      resetSimulation()
-      return
-    }
-
-    if (sim.isFinished && targetSteps === undefined) {
       resetSimulation()
       return
     }
@@ -265,6 +261,14 @@ export default function Home() {
             </MenubarContent>
           </MenubarMenu>
           <MenubarMenu>
+            <MenubarTrigger>Feedback</MenubarTrigger>
+            <MenubarContent>
+              <a href="https://forms.gle/6YEx5dtdCyrQhByMA">
+                <MenubarItem><MessageSquare />Let us know what you think</MenubarItem>
+              </a>
+            </MenubarContent>
+          </MenubarMenu>
+          <MenubarMenu>
             <MenubarTrigger>Info</MenubarTrigger>
             <MenubarContent>
               <a href="https://github.com/BartoszLiberda/LLVM-Visualiser">
@@ -360,53 +364,84 @@ export default function Home() {
 
       <div className="flex flex-col xl:flex-row justify-between items-center p-6 md:p-8 shrink-0 gap-6">
         <div className="flex flex-wrap justify-center gap-3 md:gap-5 w-full xl:w-auto">
-          <Button
-            variant="secondary"
-            className="cursor-pointer"
-            onClick={() => {
-              toast.promise(
-                async () => {
-                  const response = await fetch("/api/compile", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ code: inputCode }),
-                  });
-                  const data = await response.json();
-                  if (!response.ok) {
-                    throw new Error(data.error || "Server Error");
-                  }
-                  setOutputCode(data.result);
-                  return data;
-                },
-                {
-                  loading: "Compiling C++ code...",
-                  success: (data) => {
-                    setOutputCode(data.result);
-                    if (data.result != "// Compile to see LLVM here...") {
-                      resetSimulation(data.result)
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="secondary"
+                className="cursor-pointer"
+                onClick={() => {
+                  toast.promise(
+                    async () => {
+                      const response = await fetch("/api/compile", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ code: inputCode }),
+                      });
+                      const data = await response.json();
+                      if (!response.ok) {
+                        throw new Error(data.error || "Server Error");
+                      }
+                      setOutputCode(data.result);
+                      return data;
+                    },
+                    {
+                      loading: "Compiling C++ code...",
+                      success: (data) => {
+                        setOutputCode(data.result);
+                        if (data.result != "// Compile to see LLVM here...") {
+                          resetSimulation(data.result)
+                        }
+                        return "Compilation complete!";
+                      },
+                      error: (err) => `Error: ${err.message}`,
                     }
-                    return "Compilation complete!";
-                  },
-                  error: (err) => `Error: ${err.message}`,
-                }
-              )
-            }}
-          >
-            Compile
-            <Hammer />
-          </Button>
-          <Button variant="secondary" className="cursor-pointer" onClick={() => step(simRef.current?.instructions.length)}>
-            Run
-            <Play />
-          </Button>
-          <Button variant="secondary" className="cursor-pointer" onClick={() => step()}>
-            Step
-            <SkipForward />
-          </Button>
-          <Button variant="secondary" className="cursor-pointer" onClick={() => resetSimulation()}>
-            Reset
-            <RefreshCcw />
-          </Button>
+                  )
+                }}
+              >
+                Compile
+                <Hammer />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Compile C++ To LLVM
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current} onClick={() => step(simRef.current?.instructions.length)}>
+                Run
+                <Play />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Run LLVM
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current || pc === simRef.current?.instructions.length} onClick={() => step()}>
+                Step
+                <SkipForward />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Step LLVM
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current} onClick={() => resetSimulation()}>
+                Reset
+                <RefreshCcw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Reset Simulation State
+            </TooltipContent>
+          </Tooltip>
         </div>
         <div className="flex flex-col gap-3 pb-3 w-full max-w-md xl:w-1/3">
           <h1 className="flex items-center gap-2"><GitCommitHorizontal size={16} />{`Step: ${pc}`}</h1>
