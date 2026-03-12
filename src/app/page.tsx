@@ -233,7 +233,7 @@ export default function Home() {
         ref={fileInputRef}
         onChange={handleFileUpload}
         className="hidden"
-        accept=".cpp"
+        accept=".cpp, .c"
       />
 
       <div className="flex gap-10 items-center ml-10 mr-10 mt-5 shrink-0">
