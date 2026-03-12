@@ -46,6 +46,8 @@ export default function Home() {
   const [memory, setMemory] = useState<Record<string, number>>({})
   const [logs, setLogs] = useState<string[]>([])
   const [pc, setPc] = useState(0)
+  const [stepCount, setStepCount] = useState(0)
+  const [maxSteps, setMaxSteps] = useState(0)
   const [isFinished, setIsFinished] = useState(false)
 
   const irEditorRef = useRef<MonacoEditor | null>(null)
@@ -71,10 +73,20 @@ export default function Home() {
       }
 
       simRef.current = new Simulator(instructions);
+
+      const drySim = new Simulator(instructions);
+      let localMaxSteps = 0;
+      while (!drySim.isFinished && drySim.step() !== null) {
+        localMaxSteps++;
+        if (localMaxSteps >= 2000) break;
+      }
+      setMaxSteps(localMaxSteps);
+
       setRegisters({});
       setMemory({});
       setLogs([]);
       setPc(0);
+      setStepCount(0);
       setIsFinished(false);
       clearHighlights();
 
@@ -93,10 +105,10 @@ export default function Home() {
       return
     }
 
-    let targetPc = targetSteps !== undefined ? targetSteps : sim.pc + 1
+    let target = targetSteps !== undefined ? targetSteps : stepCount + 1
 
     let shouldResetLogs = false
-    if (targetPc < sim.pc) {
+    if (target < stepCount) {
       const match = grammar.match(outputCode)
       if (match.failed()) return
       try {
@@ -111,8 +123,9 @@ export default function Home() {
 
     const logsToAdd: string[] = []
     let lastLineExecuted: number | null = null
+    let currentSimSteps = shouldResetLogs ? 0 : stepCount;
 
-    while (sim.pc < targetPc && !sim.isFinished) {
+    while (currentSimSteps < target && !sim.isFinished) {
       const currentPc = sim.pc
       const prevLogsLength = sim.logs.length
 
@@ -123,6 +136,7 @@ export default function Home() {
 
       const newLogs = sim.logs.slice(prevLogsLength).map(log => `Line ${currentPc + 2}: ${log}`)
       logsToAdd.push(...newLogs)
+      currentSimSteps++
     }
 
     setRegisters({ ...sim.registers })
@@ -135,9 +149,10 @@ export default function Home() {
     }
 
     setPc(sim.pc)
+    setStepCount(currentSimSteps)
     setIsFinished(sim.isFinished)
 
-    if (sim.pc === 0) {
+    if (currentSimSteps === 0) {
       clearHighlights()
     } else if (lastLineExecuted !== null) {
       highlightLine(lastLineExecuted)
@@ -246,7 +261,7 @@ export default function Home() {
             <MenubarContent>
               <MenubarItem><Hammer />Compile</MenubarItem>
               <MenubarItem><SkipForward />Step</MenubarItem>
-              <MenubarItem onClick={() => step(simRef.current?.instructions.length)}><Play />Run</MenubarItem>
+              <MenubarItem onClick={() => step(maxSteps)}><Play />Run</MenubarItem>
               <MenubarItem><RefreshCcw />Reset</MenubarItem>
             </MenubarContent>
           </MenubarMenu>
@@ -409,7 +424,7 @@ export default function Home() {
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current} onClick={() => step(simRef.current?.instructions.length)}>
+              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current} onClick={() => step(maxSteps)}>
                 Run
                 <Play />
               </Button>
@@ -421,7 +436,7 @@ export default function Home() {
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current || pc === simRef.current?.instructions.length} onClick={() => step()}>
+              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current || stepCount === maxSteps} onClick={() => step()}>
                 Step
                 <SkipForward />
               </Button>
@@ -444,12 +459,12 @@ export default function Home() {
           </Tooltip>
         </div>
         <div className="flex flex-col gap-3 pb-3 w-full max-w-md xl:w-1/3">
-          <h1 className="flex items-center gap-2"><GitCommitHorizontal size={16} />{`Step: ${pc}`}</h1>
+          <h1 className="flex items-center gap-2"><GitCommitHorizontal size={16} />{`Step: ${stepCount} / ${maxSteps}`}</h1>
           <Slider
-            value={[pc]}
+            value={[stepCount]}
             onValueChange={(val) => step(val[0])}
             min={0}
-            max={simRef.current?.instructions.length ?? 0}
+            max={maxSteps}
             step={1}
             className="cursor-grab"
           />

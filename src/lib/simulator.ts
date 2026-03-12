@@ -29,17 +29,18 @@ export const grammar = ohm.grammar(`
         Instruction = LabelDef | Assignment | AllocaInst | StoreInst | LoadInst | ReturnInst | IcmpInst | BrInst
 
         LabelDef = labelName ":"
-        Assignment = register "=" Op Type Operand "," Operand
+        Assignment = register "=" Op Keyword* Type Operand "," Operand
         AllocaInst = register "=" "alloca" Type ("," "align" number)?
         StoreInst = "store" Type Operand "," Type register ("," "align" number)?
         LoadInst = register "=" "load" Type "," Type register ("," "align" number)?
         ReturnInst = "ret" Type Operand?
         IcmpInst = register "=" "icmp" CmpPredicate Type Operand "," Operand
-        BrInst = "br" "i1" Operand "," "label" "%" labelName "," "label" "%" labelName  -- cond
-               | "br" "label" "%" labelName                                             -- uncond
+        BrInst = "br" "i1" Operand "," "label" "%" labelName "," "label" "%" labelName ","?  -- cond
+               | "br" "label" "%" labelName ","?                                             -- uncond
 
-        Op = "add" | "sub" | "mul" | "sdiv"
-        CmpPredicate = "eq" | "ne" | "sgt" | "sge" | "slt" | "sle"
+        Op = "add" | "sub" | "mul" | "sdiv" | "udiv" | "urem" | "srem" | "shl" | "lshr" | "ashr" | "and" | "or" | "xor"
+        Keyword = "nsw" | "nuw" | "exact"
+        CmpPredicate = "eq" | "ne" | "sgt" | "sge" | "slt" | "sle" | "ugt" | "uge" | "ult" | "ule"
         Operand = register | number | bool | nullConst
         Type = typeBase "*"*
         typeBase = intType | "ptr" | "void"
@@ -117,6 +118,15 @@ export class Simulator {
                     else if (inst.op === 'sub') { res = v1 - v2; opStr = '-'; }
                     else if (inst.op === 'mul') { res = v1 * v2; opStr = '*'; }
                     else if (inst.op === 'sdiv') { res = Math.trunc(v1 / v2); opStr = '/'; }
+                    else if (inst.op === 'udiv') { res = Math.floor(Math.abs(v1) / Math.abs(v2)); opStr = '/'; }
+                    else if (inst.op === 'urem') { res = Math.abs(v1) % Math.abs(v2); opStr = '%'; }
+                    else if (inst.op === 'srem') { res = v1 % v2; opStr = '%'; }
+                    else if (inst.op === 'shl') { res = v1 << v2; opStr = '<<'; }
+                    else if (inst.op === 'lshr') { res = v1 >>> v2; opStr = '>>'; }
+                    else if (inst.op === 'ashr') { res = v1 >> v2; opStr = '>>'; }
+                    else if (inst.op === 'and') { res = v1 & v2; opStr = '&'; }
+                    else if (inst.op === 'or') { res = v1 | v2; opStr = '|'; }
+                    else if (inst.op === 'xor') { res = v1 ^ v2; opStr = '^'; }
                     this.registers[inst.dest] = res;
                     this.logs.push(`Calculated ${v1} ${opStr} ${v2} = ${res} (stored in ${inst.dest})`);
                     break;
@@ -163,6 +173,10 @@ export class Simulator {
                         case 'sge': res = v1 >= v2; opStr = '>='; break;
                         case 'slt': res = v1 < v2; opStr = '<'; break;
                         case 'sle': res = v1 <= v2; opStr = '<='; break;
+                        case 'ugt': res = v1 > v2; opStr = '>'; break;
+                        case 'uge': res = v1 >= v2; opStr = '>='; break;
+                        case 'ult': res = v1 < v2; opStr = '<'; break;
+                        case 'ule': res = v1 <= v2; opStr = '<='; break;
                     }
                     this.registers[inst.dest] = res ? 1 : 0;
                     this.logs.push(`Compared ${v1} ${opStr} ${v2} -> ${res} (stored in ${inst.dest})`);
@@ -218,7 +232,7 @@ semantics.addOperation<any>('parse', {
             name: name.sourceString
         };
     },
-    Assignment(dest, _eq, op, _type, val1, _comma, val2) {
+    Assignment(dest, _eq, op, _kw, _type, val1, _comma, val2) {
         return {
             type: 'ASSIGNMENT',
             line: this.source.getLineAndColumn().lineNum,
@@ -238,7 +252,7 @@ semantics.addOperation<any>('parse', {
             val2: val2.parse()
         };
     },
-    BrInst_cond(_br, _i1, cond, _c1, _label1, _percent1, iftrue, _c2, _label2, _percent2, iffalse) {
+    BrInst_cond(_br, _i1, cond, _c1, _label1, _percent1, iftrue, _c2, _label2, _percent2, iffalse, _optComma) {
         return {
             type: 'BR_COND',
             line: this.source.getLineAndColumn().lineNum,
@@ -247,7 +261,7 @@ semantics.addOperation<any>('parse', {
             iffalse: iffalse.sourceString
         };
     },
-    BrInst_uncond(_br, _label, _percent, dest) {
+    BrInst_uncond(_br, _label, _percent, dest, _optComma) {
         return {
             type: 'BR_UNCOND',
             line: this.source.getLineAndColumn().lineNum,
