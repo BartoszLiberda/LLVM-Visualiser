@@ -120,6 +120,17 @@
   background-color: rgba(254, 240, 138, 0.3) !important;
 }
 
+.breakpoint-glyph::after {
+  content: '';
+  display: block;
+  background-color: #ef4444;
+  border-radius: 50%;
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  margin-left: 6px;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

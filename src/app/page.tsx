@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
 import { useState, useRef } from "react"
-import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser, MessageSquare } from "lucide-react"
+import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser, MessageSquare, Pause, Plus, Minus } from "lucide-react"
 import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
@@ -18,18 +18,11 @@ import RegisterView from "@/components/registerView"
 import MemoryView from "@/components/memoryView"
 import {
   Menubar,
-  MenubarCheckboxItem,
   MenubarContent,
-  MenubarGroup,
   MenubarItem,
   MenubarMenu,
   MenubarRadioGroup,
   MenubarRadioItem,
-  MenubarSeparator,
-  MenubarShortcut,
-  MenubarSub,
-  MenubarSubContent,
-  MenubarSubTrigger,
   MenubarTrigger,
 } from "@/components/ui/menubar"
 import { useTheme } from "next-themes";
@@ -45,10 +38,10 @@ export default function Home() {
   const [registers, setRegisters] = useState<Record<string, number>>({})
   const [memory, setMemory] = useState<Record<string, number>>({})
   const [logs, setLogs] = useState<string[]>([])
-  const [pc, setPc] = useState(0)
   const [stepCount, setStepCount] = useState(0)
+  const stepCountRef = useRef(0)
   const [maxSteps, setMaxSteps] = useState(0)
-  const [isFinished, setIsFinished] = useState(false)
+  const [runSpeed, setRunSpeed] = useState(500)
 
   const irEditorRef = useRef<MonacoEditor | null>(null)
   const sourceEditorRef = useRef<MonacoEditor | null>(null)
@@ -56,6 +49,8 @@ export default function Home() {
   const irDecorationRef = useRef<EditorDecorationsCollection | null>(null);
   const simRef = useRef<Simulator | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const bpRef = useRef<Set<number>>(new Set());
+  const bpDecorationRef = useRef<EditorDecorationsCollection | null>(null);
 
   const resetSimulation = (optionalCode?: string) => {
     const match = grammar.match(optionalCode ?? outputCode);
@@ -85,9 +80,9 @@ export default function Home() {
       setRegisters({});
       setMemory({});
       setLogs([]);
-      setPc(0);
       setStepCount(0);
-      setIsFinished(false);
+      stepCountRef.current = 0;
+      stopSimulation();
       clearHighlights();
 
       toast.success("Simulation Reset");
@@ -98,6 +93,37 @@ export default function Home() {
     }
   }
 
+  const isRunningRef = useRef(false);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const runSimulation = async () => {
+    if (!simRef.current || isRunningRef.current) return;
+
+    isRunningRef.current = true;
+    setIsRunning(true);
+
+    while (isRunningRef.current && !simRef.current.isFinished) {
+      step();
+
+      const currentLine = simRef.current.pc + 2;
+      if (bpRef.current.has(currentLine)) {
+        break;
+      }
+
+      await delay(runSpeed);
+    }
+
+    isRunningRef.current = false;
+    setIsRunning(false);
+  };
+
+  const stopSimulation = () => {
+    isRunningRef.current = false;
+    setIsRunning(false);
+  };
+
   const step = (targetSteps?: number) => {
     let sim = simRef.current
     if (!sim) {
@@ -105,10 +131,10 @@ export default function Home() {
       return
     }
 
-    let target = targetSteps !== undefined ? targetSteps : stepCount + 1
+    let target = targetSteps !== undefined ? targetSteps : stepCountRef.current + 1
 
     let shouldResetLogs = false
-    if (target < stepCount) {
+    if (target < stepCountRef.current) {
       const match = grammar.match(outputCode)
       if (match.failed()) return
       try {
@@ -123,11 +149,16 @@ export default function Home() {
 
     const logsToAdd: string[] = []
     let lastLineExecuted: number | null = null
-    let currentSimSteps = shouldResetLogs ? 0 : stepCount;
+    let currentSimSteps = shouldResetLogs ? 0 : stepCountRef.current;
 
     while (currentSimSteps < target && !sim.isFinished) {
       const currentPc = sim.pc
       const prevLogsLength = sim.logs.length
+      const currentLine = currentPc + 2;
+
+      if (currentSimSteps > 0 && bpRef.current.has(currentLine)) {
+        break;
+      }
 
       const lineExecuted = sim.step()
       if (lineExecuted !== null) {
@@ -148,9 +179,8 @@ export default function Home() {
       setLogs(prev => [...prev, ...logsToAdd])
     }
 
-    setPc(sim.pc)
     setStepCount(currentSimSteps)
-    setIsFinished(sim.isFinished)
+    stepCountRef.current = currentSimSteps
 
     if (currentSimSteps === 0) {
       clearHighlights()
@@ -185,6 +215,34 @@ export default function Home() {
   const handleIRMount: OnMount = (editor, monaco) => {
     irEditorRef.current = editor
     monacoRef.current = monaco
+
+    bpDecorationRef.current = editor.createDecorationsCollection()
+    editor.onMouseDown((e) => {
+      const isGutterClick =
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS;
+
+      if (isGutterClick && e.target.position) {
+        const line = e.target.position.lineNumber
+        const bps = new Set(bpRef.current)
+        if (bps.has(line)) {
+          bps.delete(line)
+        } else {
+          bps.add(line)
+        }
+        bpRef.current = bps
+        const newDecorations = Array.from(bps).map(bpLine => ({
+          range: new monaco.Range(bpLine, 1, bpLine, 1),
+          options: {
+            isWholeLine: false,
+            glyphMarginClassName: "breakpoint-glyph"
+          }
+        }))
+        bpDecorationRef.current?.set(newDecorations)
+      }
+    })
+
   }
 
   const handleSourceMount: OnMount = (editor, monaco) => {
@@ -259,10 +317,8 @@ export default function Home() {
           <MenubarMenu>
             <MenubarTrigger>Controls</MenubarTrigger>
             <MenubarContent>
-              <MenubarItem><Hammer />Compile</MenubarItem>
-              <MenubarItem><SkipForward />Step</MenubarItem>
-              <MenubarItem onClick={() => step(maxSteps)}><Play />Run</MenubarItem>
-              <MenubarItem><RefreshCcw />Reset</MenubarItem>
+              <MenubarItem onClick={() => setRunSpeed(runSpeed + 100)}><Plus />Run Speed</MenubarItem>
+              <MenubarItem onClick={() => setRunSpeed(runSpeed - 100)}><Minus />Run Speed</MenubarItem>
             </MenubarContent>
           </MenubarMenu>
           <MenubarMenu>
@@ -333,7 +389,8 @@ export default function Home() {
               options={{
                 readOnly: true,
                 scrollBeyondLastLine: false,
-                minimap: { enabled: false }
+                minimap: { enabled: false },
+                glyphMargin: true,
               }}
             />
           </div>
@@ -424,19 +481,24 @@ export default function Home() {
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current} onClick={() => step(maxSteps)}>
-                Run
-                <Play />
+              <Button
+                variant="secondary"
+                className="cursor-pointer"
+                disabled={!simRef.current || stepCount === maxSteps}
+                onClick={isRunning ? stopSimulation : runSimulation}
+              >
+                {isRunning ? "Pause" : "Run"}
+                {isRunning ? <Pause /> : <Play />}
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              Run LLVM
+              {isRunning ? "Pause LLVM" : "Run LLVM"}
             </TooltipContent>
           </Tooltip>
 
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current || stepCount === maxSteps} onClick={() => step()}>
+              <Button variant="secondary" className="cursor-pointer" disabled={!simRef.current || stepCount === maxSteps || isRunning} onClick={() => step()}>
                 Step
                 <SkipForward />
               </Button>
