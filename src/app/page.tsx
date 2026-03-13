@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { toast } from "sonner"
 import { useState, useRef } from "react"
-import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser, MessageSquare, Pause, Plus, Minus } from "lucide-react"
+import { Hammer, FileCodeCorner, Cpu, Play, SkipForward, FolderGit, RefreshCcw, MemoryStick, Logs, GitCommitHorizontal, FileText, Upload, Eraser, MessageSquare, Pause, Plus, Minus, Info } from "lucide-react"
 import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
@@ -38,9 +38,11 @@ export default function Home() {
   const [registers, setRegisters] = useState<Record<string, number>>({})
   const [memory, setMemory] = useState<Record<string, number>>({})
   const [logs, setLogs] = useState<string[]>([])
+  const [pc, setPc] = useState(0)
   const [stepCount, setStepCount] = useState(0)
   const stepCountRef = useRef(0)
   const [maxSteps, setMaxSteps] = useState(0)
+  const [isFinished, setIsFinished] = useState(false)
   const [runSpeed, setRunSpeed] = useState(500)
 
   const irEditorRef = useRef<MonacoEditor | null>(null)
@@ -80,8 +82,10 @@ export default function Home() {
       setRegisters({});
       setMemory({});
       setLogs([]);
+      setPc(0);
       setStepCount(0);
       stepCountRef.current = 0;
+      setIsFinished(false);
       stopSimulation();
       clearHighlights();
 
@@ -179,8 +183,10 @@ export default function Home() {
       setLogs(prev => [...prev, ...logsToAdd])
     }
 
+    setPc(sim.pc)
     setStepCount(currentSimSteps)
     stepCountRef.current = currentSimSteps
+    setIsFinished(sim.isFinished)
 
     if (currentSimSteps === 0) {
       clearHighlights()
@@ -359,7 +365,17 @@ export default function Home() {
 
         <ResizablePanel defaultSize={30}>
           <div className="p-5 h-full">
-            <h1 className="flex items-center gap-2 ml-2 mb-1"><FileCodeCorner size={16} />C++</h1>
+            <div className="flex items-center justify-between">
+              <h1 className="flex items-center gap-2 ml-2 mb-1"><FileCodeCorner size={16} />C++</h1>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info size={16} className="text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  Input C++ or C code here manually or by dragging and dropping a file, then press compile to see the LLVM.
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <Editor
               className="p-1"
               height="98%"
@@ -378,7 +394,17 @@ export default function Home() {
         <ResizableHandle withHandle />
         <ResizablePanel defaultSize={30}>
           <div className="p-5 h-full">
-            <h1 className="flex items-center gap-2 ml-2 mb-1"><FileCodeCorner size={16} />LLVM</h1>
+            <div className="flex items-center justify-between">
+              <h1 className="flex items-center gap-2 ml-2 mb-1"><FileCodeCorner size={16} />LLVM</h1>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info size={16} className="text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  Shows the LLVM code, this window is read-only but breakpoints can be set.
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <Editor
               className="p-1"
               height="98%"
@@ -401,13 +427,33 @@ export default function Home() {
             <ResizablePanel defaultSize={70}>
               <div className="flex flex-row justify-between h-full p-5 pb-5">
                 <div className="w-[47.5%] h-full flex flex-col overflow-hidden">
-                  <h1 className="flex items-center gap-2 ml-2 mb-1 shrink-0"><Cpu size={16} />Register View</h1>
+                  <div className="flex items-center justify-between ml-2 mb-1">
+                    <h1 className="flex items-center gap-2 shrink-0"><Cpu size={16} />Register View</h1>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info size={16} className="text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Shows what is stored in registers.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                   <div className="flex-1 min-h-0 p-2 border-1 outline-white">
                     <RegisterView registers={registers} />
                   </div>
                 </div>
                 <div className="w-[47.5%] h-full flex flex-col overflow-hidden">
-                  <h1 className="flex items-center gap-2 ml-2 mb-1 shrink-0"><MemoryStick size={16} />Memory View</h1>
+                  <div className="flex items-center justify-between mb-1 ml-2">
+                    <h1 className="flex items-center gap-2 shrink-0"><MemoryStick size={16} />Memory View</h1>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info size={16} className="text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Shows what is stored in memory.
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
                   <div className="flex-1 min-h-0 p-2 border-1 outline-white">
                     <MemoryView memory={memory} />
                   </div>
@@ -417,7 +463,17 @@ export default function Home() {
             <ResizableHandle withHandle />
             <ResizablePanel defaultSize={30}>
               <div className="flex flex-col h-full p-5 pt-5 overflow-hidden">
-                <h1 className="flex items-center gap-2 ml-2 mb-1 shrink-0"><Logs size={16} />Logs</h1>
+                <div className="flex items-center justify-between mb-1 ml-2">
+                  <h1 className="flex items-center gap-2 shrink-0"><Logs size={16} />Logs</h1>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info size={16} className="text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Brief description of what is happening during the execution line by line.
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
                 <ScrollArea className="flex-1 min-h-0 pl-3 pt-2 border-1 outline-white">
                   {logs.map((log, index) => (
                     <div key={index} className="text-muted-foreground">
