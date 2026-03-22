@@ -27,7 +27,7 @@ function cleanupIR(ir: string): string {
 
 export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}))
-    let { code } = body
+    let { code, language } = body
 
     if (!code || typeof code !== 'string') {
         return NextResponse.json({ error: 'No code provided' }, { status: 400 })
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     const llvmOutput = await new Promise<string>((resolve, reject) => {
 
         const clang = spawn('clang', [
-            '-S', '-emit-llvm', '-O0', '-x', 'c++',
+            '-S', '-emit-llvm', '-O0', '-x', language === 'c' ? 'c' : 'c++',
             '-target', 'arm64-apple-darwin25.2.0',
             '-fno-crash-diagnostics',
             '-ferror-limit=10',
