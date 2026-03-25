@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { OnMount } from "@monaco-editor/react";
-import { Simulator, semantics, grammar, Instruction } from "@/lib/simulator";
+import { Simulator, semantics, grammar, FunctionDef } from "@/lib/simulator";
 
 type MonacoEditor = Parameters<OnMount>[0];
 type Monaco = Parameters<OnMount>[1];
@@ -65,17 +65,16 @@ export function useSimulator() {
     }
 
     try {
-      const instructions: Instruction[] = semantics(match).parse();
+      const functionMap: Record<string, FunctionDef> = semantics(match).parse();
 
-      if (instructions.length === 0) {
-        toast.warning("No instructions found");
+      if (Object.keys(functionMap).length === 0) {
+        toast.warning("No functions found");
         return;
       }
 
-      simRef.current = new Simulator(instructions);
+      simRef.current = new Simulator(functionMap);
 
-      // Dry run for max steps
-      const drySim = new Simulator(instructions);
+      const drySim = new Simulator(functionMap);
       let localMaxSteps = 0;
       while (!drySim.isFinished && drySim.step() !== null) {
         localMaxSteps++;
@@ -83,7 +82,7 @@ export function useSimulator() {
       }
       setMaxSteps(localMaxSteps);
 
-      setRegisters({});
+      setRegisters(simRef.current.currentFrame.registers);
       setMemory({});
       setLogs([]);
       setPc(0);
@@ -114,8 +113,8 @@ export function useSimulator() {
       const match = grammar.match(currentCode ?? "");
       if (match.failed()) return;
       try {
-        const instructions = semantics(match).parse();
-        sim = new Simulator(instructions);
+        const functionMap = semantics(match).parse();
+        sim = new Simulator(functionMap);
         simRef.current = sim;
         shouldResetLogs = true;
       } catch (err) {
@@ -128,25 +127,25 @@ export function useSimulator() {
     let currentSimSteps = shouldResetLogs ? 0 : stepCountRef.current;
 
     while (currentSimSteps < target && !sim.isFinished) {
-      const currentPc = sim.pc;
-      const prevLogsLength = sim.logs.length;
-      const currentLine = currentPc + 2;
+
+      const currentLine = sim.pc + 2;
 
       if (currentSimSteps > 0 && bpRef.current.has(currentLine)) {
         break;
       }
 
+      const prevLogsLength = sim.logs.length;
       const lineExecuted = sim.step();
       if (lineExecuted !== null) {
         lastLineExecuted = lineExecuted;
       }
 
-      const newLogs = sim.logs.slice(prevLogsLength).map((log) => `Line ${currentPc + 2}: ${log}`);
+      const newLogs = sim.logs.slice(prevLogsLength).map((log) => log);
       logsToAdd.push(...newLogs);
       currentSimSteps++;
     }
 
-    setRegisters({ ...sim.registers });
+    setRegisters({ ...sim.currentFrame.registers });
     setMemory({ ...sim.memory });
 
     if (shouldResetLogs) {
@@ -205,7 +204,7 @@ export function useSimulator() {
         const line = e.target.position.lineNumber;
         const bps = new Set(bpRef.current);
         if (bps.has(line)) {
-          bps.delete(line);
+          bps.delete(line)
         } else {
           bps.add(line);
         }
