@@ -90,7 +90,13 @@ export function useSimulator() {
       stepCountRef.current = 0;
       setIsFinished(false);
       stopSimulation();
-      clearHighlights();
+
+      const firstFunc = simRef.current.functions[simRef.current.currentFrame.funcName];
+      if (firstFunc && firstFunc.instructions.length > 0) {
+        highlightLine(firstFunc.instructions[0].line);
+      } else {
+        clearHighlights();
+      }
 
       toast.success("Simulation Reset");
     } catch (err: any) {
@@ -123,22 +129,23 @@ export function useSimulator() {
     }
 
     const logsToAdd: string[] = [];
-    let lastLineExecuted: number | null = null;
     let currentSimSteps = shouldResetLogs ? 0 : stepCountRef.current;
+    const initialSimSteps = currentSimSteps;
 
     while (currentSimSteps < target && !sim.isFinished) {
 
-      const currentLine = sim.pc + 2;
+      let currentLine = -1;
+      const currentFunc = sim.functions[sim.currentFrame.funcName];
+      if (currentFunc && sim.pc < currentFunc.instructions.length) {
+        currentLine = currentFunc.instructions[sim.pc].line;
+      }
 
-      if (currentSimSteps > 0 && bpRef.current.has(currentLine)) {
+      if (currentSimSteps > initialSimSteps && bpRef.current.has(currentLine)) {
         break;
       }
 
       const prevLogsLength = sim.logs.length;
-      const lineExecuted = sim.step();
-      if (lineExecuted !== null) {
-        lastLineExecuted = lineExecuted;
-      }
+      sim.step();
 
       const newLogs = sim.logs.slice(prevLogsLength).map((log) => log);
       logsToAdd.push(...newLogs);
@@ -159,10 +166,15 @@ export function useSimulator() {
     stepCountRef.current = currentSimSteps;
     setIsFinished(sim.isFinished);
 
-    if (currentSimSteps === 0) {
+    if (sim.isFinished) {
       clearHighlights();
-    } else if (lastLineExecuted !== null) {
-      highlightLine(lastLineExecuted);
+    } else {
+      const currentFunc = sim.functions[sim.currentFrame.funcName];
+      if (currentFunc && sim.pc < currentFunc.instructions.length) {
+        highlightLine(currentFunc.instructions[sim.pc].line);
+      } else {
+        clearHighlights();
+      }
     }
   }, [clearHighlights, highlightLine, resetSimulation]);
 
@@ -177,7 +189,12 @@ export function useSimulator() {
     while (isRunningRef.current && !simRef.current.isFinished) {
       step();
 
-      const currentLine = simRef.current.pc + 2;
+      let currentLine = -1;
+      const currentFunc = simRef.current.functions[simRef.current.currentFrame.funcName];
+      if (currentFunc && simRef.current.pc < currentFunc.instructions.length) {
+        currentLine = currentFunc.instructions[simRef.current.pc].line;
+      }
+
       if (bpRef.current.has(currentLine)) {
         break;
       }

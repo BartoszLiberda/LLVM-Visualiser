@@ -76,6 +76,13 @@ export default function Home() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      const fileName = file.name.toLowerCase();
+      if (fileName.endsWith('.c')) {
+        setLanguage('c');
+      } else if (fileName.endsWith('.cpp') || fileName.endsWith('.cc') || fileName.endsWith('.cxx')) {
+        setLanguage('cpp');
+      }
+      
       try {
         const text = await file.text();
         setInputCode(text);
@@ -91,6 +98,13 @@ export default function Home() {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
+      const fileName = file.name.toLowerCase();
+      if (fileName.endsWith('.c')) {
+        setLanguage('c');
+      } else if (fileName.endsWith('.cpp') || fileName.endsWith('.cc') || fileName.endsWith('.cxx')) {
+        setLanguage('cpp');
+      }
+
       try {
         const text = await file.text();
         setInputCode(text);
@@ -117,7 +131,7 @@ export default function Home() {
 
       <MainHeader
         onUpload={() => fileInputRef.current?.click()}
-        onClear={() => setInputCode(language === "c" ? `int main() {\n  return 1;\n}` : `int main() {\n  return 1;\n}`)} // Same for now
+        onClear={() => setInputCode(language === "c" ? `int main() {\n  return 1;\n}` : `int main() {\n  return 1;\n}`)}
         runSpeed={runSpeed}
         onSpeedChange={setRunSpeed}
         language={language}

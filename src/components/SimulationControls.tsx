@@ -1,6 +1,6 @@
 "use client";
 
-import { Hammer, Play, SkipForward, RefreshCcw, Pause, GitCommitHorizontal } from "lucide-react";
+import { Hammer, Play, SkipForward, SkipBack, RefreshCcw, Pause, GitCommitHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
@@ -60,6 +60,18 @@ export function SimulationControls({
           </TooltipTrigger>
           <TooltipContent>
             {isRunning ? "Pause LLVM" : "Run LLVM"}
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="secondary" className="cursor-pointer" disabled={!simReady || stepCount === 0 || isRunning} onClick={() => onStep(stepCount - 1)}>
+              <SkipBack />
+              Back
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            Step Back LLVM
           </TooltipContent>
         </Tooltip>
 
