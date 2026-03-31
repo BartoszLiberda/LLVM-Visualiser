@@ -18,7 +18,13 @@ export function useSimulator() {
   const stepCountRef = useRef(0);
   const [maxSteps, setMaxSteps] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
-  const [runSpeed, setRunSpeed] = useState(200);
+  const [runSpeed, setRunSpeedState] = useState(200);
+  const runSpeedRef = useRef(200);
+
+  const setRunSpeed = useCallback((speed: number) => {
+    setRunSpeedState(speed);
+    runSpeedRef.current = speed;
+  }, []);
   const isRunningRef = useRef(false);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -60,7 +66,8 @@ export function useSimulator() {
   const resetSimulation = useCallback((code: string) => {
     const match = grammar.match(code);
     if (match.failed()) {
-      toast.error("Unsupported Instruction");
+      console.error("Parser Error:\n" + match.message);
+      toast.error(`Parser Error: ${match.shortMessage}`);
       return;
     }
 
@@ -199,12 +206,12 @@ export function useSimulator() {
         break;
       }
 
-      await delay(runSpeed);
+      await delay(runSpeedRef.current);
     }
 
     isRunningRef.current = false;
     setIsRunning(false);
-  }, [runSpeed, step]);
+  }, [step]);
 
   const handleIRMount: OnMount = useCallback((editor, monaco) => {
     irEditorRef.current = editor;

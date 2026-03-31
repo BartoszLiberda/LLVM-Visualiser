@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FolderGit, FileText, Upload, Eraser, MessageSquare, Plus, Minus } from "lucide-react";
+import { FolderGit, FileText, Upload, Eraser, MessageSquare } from "lucide-react";
 import {
   Menubar,
   MenubarContent,
@@ -10,30 +10,35 @@ import {
   MenubarRadioGroup,
   MenubarRadioItem,
   MenubarTrigger,
+  MenubarCheckboxItem,
 } from "@/components/ui/menubar";
 import { useTheme } from "next-themes";
 
 interface MainHeaderProps {
   onUpload: () => void;
   onClear: () => void;
-  runSpeed: number;
-  onSpeedChange: (speed: number) => void;
   language: "c" | "cpp";
   onLanguageChange: (lang: "c" | "cpp") => void;
+  showSource: boolean;
+  setShowSource: (show: boolean) => void;
+  showIR: boolean;
+  setShowIR: (show: boolean) => void;
 }
 
 export function MainHeader({
   onUpload,
   onClear,
-  runSpeed,
-  onSpeedChange,
   language,
-  onLanguageChange
+  onLanguageChange,
+  showSource,
+  setShowSource,
+  showIR,
+  setShowIR
 }: MainHeaderProps) {
   const { theme, setTheme } = useTheme();
 
   return (
-    <div className="flex gap-10 items-center ml-10 mr-10 mt-5 shrink-0">
+    <div className="flex flex-col lg:flex-row flex-wrap gap-4 lg:gap-10 items-center px-4 md:px-10 mt-4 md:mt-5 shrink-0">
       <div className="flex gap-2 items-center">
         <Image
           src="/LLVMLogo.svg"
@@ -54,6 +59,17 @@ export function MainHeader({
           </MenubarContent>
         </MenubarMenu>
         <MenubarMenu>
+          <MenubarTrigger>View</MenubarTrigger>
+          <MenubarContent>
+            <MenubarCheckboxItem checked={showSource} onCheckedChange={setShowSource}>
+              C/C++ Source
+            </MenubarCheckboxItem>
+            <MenubarCheckboxItem checked={showIR} onCheckedChange={setShowIR}>
+              LLVM IR
+            </MenubarCheckboxItem>
+          </MenubarContent>
+        </MenubarMenu>
+        <MenubarMenu>
           <MenubarTrigger>Language</MenubarTrigger>
           <MenubarContent>
             <MenubarRadioGroup value={language} onValueChange={(val) => onLanguageChange(val as "c" | "cpp")}>
@@ -62,13 +78,7 @@ export function MainHeader({
             </MenubarRadioGroup>
           </MenubarContent>
         </MenubarMenu>
-        <MenubarMenu>
-          <MenubarTrigger>Controls</MenubarTrigger>
-          <MenubarContent>
-            <MenubarItem onClick={() => onSpeedChange(runSpeed - 100)}><Plus />Run Speed</MenubarItem>
-            <MenubarItem onClick={() => onSpeedChange(runSpeed + 100)}><Minus />Run Speed</MenubarItem>
-          </MenubarContent>
-        </MenubarMenu>
+
         <MenubarMenu>
           <MenubarTrigger>Theme</MenubarTrigger>
           <MenubarContent>

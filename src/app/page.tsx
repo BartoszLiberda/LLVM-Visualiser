@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { OnMount } from "@monaco-editor/react";
 import { useTheme } from "next-themes";
 import { useSimulator } from "@/hooks/useSimulator";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 import { Separator } from "@/components/ui/separator";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
@@ -21,6 +22,9 @@ export default function Home() {
   const [inputCode, setInputCode] = useState(`int main() {\n  return 1;\n}`);
   const [outputCode, setOutputCode] = useState<string>("; Compile to see LLVM here...");
   const [language, setLanguage] = useState<"c" | "cpp">("cpp");
+  const [showSource, setShowSource] = useState(true);
+  const [showIR, setShowIR] = useState(true);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const sourceEditorRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -132,33 +136,45 @@ export default function Home() {
       <MainHeader
         onUpload={() => fileInputRef.current?.click()}
         onClear={() => setInputCode(language === "c" ? `int main() {\n  return 1;\n}` : `int main() {\n  return 1;\n}`)}
-        runSpeed={runSpeed}
-        onSpeedChange={setRunSpeed}
         language={language}
         onLanguageChange={setLanguage}
+        showSource={showSource}
+        setShowSource={setShowSource}
+        showIR={showIR}
+        setShowIR={setShowIR}
       />
 
       <Separator className="mt-5 shrink-0" />
 
-      <ResizablePanelGroup orientation="horizontal" className="flex-1 min-h-0">
-        <ResizablePanel defaultSize={30}>
-          <SourceEditor
-            inputCode={inputCode}
-            onInputChange={setInputCode}
-            onMount={handleSourceMount}
-            resolvedTheme={resolvedTheme}
-            language={language}
-          />
-        </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={30}>
-          <IREditor
-            outputCode={outputCode}
-            onMount={handleIRMount}
-            resolvedTheme={resolvedTheme}
-          />
-        </ResizablePanel>
-        <ResizableHandle withHandle />
+      <ResizablePanelGroup orientation={isDesktop ? "horizontal" : "vertical"} className="flex-1 min-h-0">
+        {showSource && (
+          <>
+            <ResizablePanel defaultSize={30}>
+              <SourceEditor
+                inputCode={inputCode}
+                onInputChange={setInputCode}
+                onMount={handleSourceMount}
+                resolvedTheme={resolvedTheme}
+                language={language}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
+        )}
+
+        {showIR && (
+          <>
+            <ResizablePanel defaultSize={30}>
+              <IREditor
+                outputCode={outputCode}
+                onMount={handleIRMount}
+                resolvedTheme={resolvedTheme}
+              />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+          </>
+        )}
+
         <ResizablePanel defaultSize={40}>
           <SimulatorWorkspace
             registers={registers}
@@ -179,6 +195,8 @@ export default function Home() {
         stepCount={stepCount}
         maxSteps={maxSteps}
         simReady={simReady}
+        runSpeed={runSpeed}
+        onSpeedChange={setRunSpeed}
       />
     </div>
   );

@@ -20,7 +20,7 @@ export function IREditor({
   return (
     <div className="p-5 h-full">
       <div className="flex items-center justify-between ml-2 mb-1">
-        <h1 className="flex items-center gap-2"><FileCodeCorner size={16} />LLVM</h1>
+        <h1 className="flex items-center gap-2"><FileCodeCorner size={16} />LLVM IR</h1>
         <Tooltip>
           <TooltipTrigger asChild>
             <Info size={16} className="text-muted-foreground" />
