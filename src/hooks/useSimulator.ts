@@ -72,16 +72,18 @@ export function useSimulator() {
     }
 
     try {
-      const functionMap: Record<string, FunctionDef> = semantics(match).parse();
+      const programAst = semantics(match).parse();
+      const functionMap: Record<string, FunctionDef> = programAst.functions;
+      const globalVars = programAst.globalVars;
 
       if (Object.keys(functionMap).length === 0) {
         toast.warning("No functions found");
         return;
       }
 
-      simRef.current = new Simulator(functionMap);
+      simRef.current = new Simulator(functionMap, globalVars);
 
-      const drySim = new Simulator(functionMap);
+      const drySim = new Simulator(functionMap, globalVars);
       let localMaxSteps = 0;
       while (!drySim.isFinished && drySim.step() !== null) {
         localMaxSteps++;
@@ -126,8 +128,8 @@ export function useSimulator() {
       const match = grammar.match(currentCode ?? "");
       if (match.failed()) return;
       try {
-        const functionMap = semantics(match).parse();
-        sim = new Simulator(functionMap);
+        const programAst = semantics(match).parse();
+        sim = new Simulator(programAst.functions, programAst.globalVars);
         simRef.current = sim;
         shouldResetLogs = true;
       } catch (err) {

@@ -1,11 +1,31 @@
 import { NextResponse } from 'next/server'
 import { spawn } from 'child_process'
 
+// Simple in-memory rate limiter
+interface RateLimitInfo {
+    count: number
+    lastReset: number
+}
+const rateLimitMap = new Map<string, RateLimitInfo>()
+const RATE_LIMIT_WINDOW_MS = 60 * 1000 // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 10 // 10 compiles per minute per IP
+
+// Periodic cleanup to prevent memory leaks from the Map
+setInterval(() => {
+    const now = Date.now()
+    for (const [ip, info] of rateLimitMap.entries()) {
+        if (now - info.lastReset > RATE_LIMIT_WINDOW_MS) {
+            rateLimitMap.delete(ip)
+        }
+    }
+}, RATE_LIMIT_WINDOW_MS)
+
 function cleanupIR(ir: string): string {
     return ir
         .split('\n')
         .map(line => {
-            let l = line.replace(/,?!.*$/, '').trim()
+            // Strip trailing LLVM metadata like `, !dbg !12` but don't break string literals containing `!`
+            let l = line.replace(/,?\s*![a-zA-Z_].*$/, '').trim()
             l = l.replace(/\s+(nsw|nuw|exact)/g, '')
             l = l.replace(/\s+(dso_local|local_unnamed_addr|mustprogress|noinline|nounwind|optnone|uwtable)/g, '')
             return l
@@ -33,9 +53,29 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'No code provided' }, { status: 400 })
     }
 
-    // SSTI Mitigation: Sanitize user input by rejecting template-like constructs
-    if (code.includes('{{') || code.includes('}}') || code.includes('<%') || code.includes('%>') || code.includes('${')) {
-        return NextResponse.json({ error: 'Template injection patterns detected in input' }, { status: 400 })
+    // Origin Check Mitigation (Basic)
+    // Ensures requests are coming from our own frontend domain or localhost
+    const origin = req.headers.get('origin')
+    const host = req.headers.get('host')
+    // If an Origin is present, ensure it loosely matches the Host to prevent cross-site compilation abuse
+    if (origin && host && !origin.includes(host)) {
+        return NextResponse.json({ error: 'Unauthorized origin' }, { status: 403 })
+    }
+
+    // Rate Limiting Mitigation
+    const ip = req.headers.get('x-forwarded-for') ?? req.headers.get('x-real-ip') ?? 'unknown-ip'
+    const now = Date.now()
+    let limitInfo = rateLimitMap.get(ip)
+
+    if (!limitInfo || now - limitInfo.lastReset > RATE_LIMIT_WINDOW_MS) {
+       limitInfo = { count: 0, lastReset: now }
+    }
+    
+    limitInfo.count++
+    rateLimitMap.set(ip, limitInfo)
+
+    if (limitInfo.count > MAX_REQUESTS_PER_WINDOW) {
+        return NextResponse.json({ error: 'Too many compilation requests. Please try again later.' }, { status: 429 })
     }
 
     const llvmOutput = await new Promise<string>((resolve, reject) => {

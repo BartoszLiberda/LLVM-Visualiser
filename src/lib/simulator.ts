@@ -1,6 +1,6 @@
 import * as ohm from "ohm-js"
 
-export type Operand = string | number
+export type Operand = any
 
 export type Instruction =
     | { type: "ASSIGNMENT"; line: number; dest: string; op: string; val1: Operand; val2: Operand }
@@ -17,6 +17,16 @@ export type Instruction =
     | { type: 'GEP'; line: number; dest: string; ptr: Operand; indexes: Operand[] }
     | { type: 'SELECT'; line: number; dest: string; cond: Operand; val1: Operand; val2: Operand }
     | { type: 'CONVERSION'; line: number; dest: string; op: string; val: Operand }
+    | { type: 'SWITCH'; line: number; cond: Operand; defaultLabel: string; cases: {val: Operand; label: string}[] }
+    | { type: 'FOP'; line: number; dest: string; op: string; val1: Operand; val2: Operand }
+    | { type: 'FCMP'; line: number; dest: string; cond: string; val1: Operand; val2: Operand }
+    | { type: 'UNREACHABLE'; line: number; }
+
+export interface GlobalDef {
+    name: string;
+    type: string;
+    value: Operand;
+}
 
 export interface FunctionDef {
     name: string;
@@ -24,24 +34,57 @@ export interface FunctionDef {
     instructions: Instruction[];
 }
 
+export interface ProgramAst {
+    functions: Record<string, FunctionDef>;
+    globalVars: Record<string, GlobalDef>;
+}
+
 export const grammar = ohm.grammar(`
     LLVM {
-        Program = FunctionDef+
+        Program = TopLevelEntity+
+        TopLevelEntity = FunctionDef | GlobalDef | TypeDef | TargetDef | DeclDef | Unrecognized
+        
+        Unrecognized = (~("define" | globalName | register "=" "type" | "target" | "declare" | "attributes") any)* "\\n"
+        
+        TargetDef = "target" (~"\\n" any)* "\\n"
+        DeclDef = "declare" (~"\\n" any)* "\\n"
+        
         FunctionDef = "define" RetAttr* Type globalName "(" Params ")" Attribute* "{" Instruction* "}"
 
-        Instruction = LabelDef | Assignment | AllocaInst | StoreInst | LoadInst | ReturnInst | IcmpInst | BrInst | CallInst | PhiInst | GepInst | SelectInst | ConversionInst
+        GlobalDef = globalName "=" GlobalAttr* ("global" | "constant") Type GlobalValue ("," "align" number)?
+        GlobalAttr = "private" | "unnamed_addr" | "dso_local" | "local_unnamed_addr" | "linkonce_odr"
+        GlobalValue = Operand | ArrayConst | "zeroinitializer" | "null"
+        ArrayConst = "c" stringLit -- c
+                   | "[" listOf<TypeAndValue, ","> "]" -- arr
+        TypeAndValue = Type RetAttr* GlobalValue
+        stringLit = "\\\"" (~"\\\"" any)* "\\\""
+
+        TypeDef = TypeDefStruct | TypeDefOpaque
+        TypeDefStruct = register "=" "type" "{" listOf<Type, ","> "}"
+        TypeDefOpaque = register "=" "type" "opaque"
+
+        Instruction = LabelDef | Assignment | FopInst | AllocaInst | StoreInst | LoadInst | ReturnInst | IcmpInst | FcmpInst | BrInst | SwitchInst | CallInst | PhiInst | GepInst | SelectInst | ConversionInst | UnreachableInst
+
+        UnreachableInst = "unreachable"
 
         LabelDef = labelNameOrNum ":"
         Assignment = register "=" Op (Keyword | number)* Type Operand "," Operand
+        FopInst = register "=" FOp (Keyword)* Type Operand "," Operand
+        
         AllocaInst = register "=" "alloca" Type ("," "align" number)?
         StoreInst = "store" (Keyword | number)* Type Operand "," Type GepPtr ("," "align" number)?
         LoadInst = register "=" "load" Type "," Type GepPtr ("," "align" number)?
         ReturnInst = "ret" Type Operand?
         IcmpInst = register "=" "icmp" CmpPredicate Type Operand "," Operand
-        BrInst = "br" "i1" Operand "," "label" "%" labelNameOrNum "," "label" "%" labelNameOrNum ","?  -- cond
-               | "br" "label" "%" labelNameOrNum ","?                                             -- uncond
+        FcmpInst = register "=" "fcmp" FcmpPredicate Type Operand "," Operand
         
-        CallInst = (register "=")? "call" RetAttr* Type globalName "(" CallParams ")"
+        BrInst = "br" "i1" Operand "," "label" "%" labelNameOrNum "," "label" "%" labelNameOrNum ","? -- cond
+               | "br" "label" "%" labelNameOrNum ","? -- uncond
+        
+        SwitchInst = "switch" Type Operand "," "label" "%" labelNameOrNum "[" SwitchCase* "]"
+        SwitchCase = Type Operand "," "label" "%" labelNameOrNum
+        
+        CallInst = (register "=")? "call" (Keyword)* RetAttr* Type globalName "(" CallParams ")" (Keyword | Attribute)*
         
         PhiInst = register "=" "phi" Type listOf<PhiIncoming, ",">
         PhiIncoming = "[" Operand "," PhiLabel "]"
@@ -49,38 +92,43 @@ export const grammar = ohm.grammar(`
         LabelRef = "%" labelNameOrNum
         
         GepInst = register "=" "getelementptr" "inbounds"? Type "," Type GepPtr ("," Type Operand)*
-        GepPtr = register | "null" | "ptr"
+        GepPtr = register | "null" | "ptr" | globalName
         
         SelectInst = register "=" "select" "i1" Operand "," Type Operand "," Type Operand
         
         ConversionInst = register "=" ConversionOp Type Operand "to" Type
-        ConversionOp = "zext" | "sext" | "trunc" | "bitcast" | "ptrtoint" | "inttoptr"
+        ConversionOp = "zext" | "sext" | "trunc" | "bitcast" | "ptrtoint" | "inttoptr" | "fptosi" | "fptoui" | "sitofp" | "uitofp" | "fptrunc" | "fpext"
 
         CallParams = listOf<CallParam, ",">
         CallParam = Type RetAttr* Operand
 
         Op = "add" | "sub" | "mul" | "sdiv" | "udiv" | "urem" | "srem" | "shl" | "lshr" | "ashr" | "and" | "or" | "xor"
-        Keyword = "nsw" | "nuw" | "exact" | "inbounds" | "align"
+        FOp = "fadd" | "fsub" | "fmul" | "fdiv" | "frem"
+        Keyword = "nsw" | "nuw" | "exact" | "inbounds" | "align" | "fast" | "nnan" | "ninf" | "nsz" | "arcp" | "contract" | "afn" | "reassoc" | "tail" | "musttail" | "notail"
         CmpPredicate = "eq" | "ne" | "sgt" | "sge" | "slt" | "sle" | "ugt" | "uge" | "ult" | "ule"
-        Operand = register | number | bool | nullConst
+        FcmpPredicate = "false" | "oeq" | "ogt" | "oge" | "olt" | "ole" | "one" | "ord" | "uno" | "ueq" | "ugt" | "uge" | "ult" | "ule" | "une" | "true"
+        
+        Operand = register | globalName | number | bool | nullConst
         
         Type = ArrayType | PointerType
         ArrayType = "[" number "x" Type "]"
         PointerType = typeBase "*"*
-        typeBase = intType | "ptr" | "void" | "label"
-
-        RetAttr = "noundef" | "signext" | "zeroext" | "inreg" | "nocapture" | "readonly"
+        typeBase = intType | "float" | "double" | "fp128" | "x86_fp80" | "ptr" | "void" | "label" | register | "..."
+        
+        RetAttr = derefAttr | "noundef" | "signext" | "zeroext" | "inreg" | "nocapture" | "readonly" | "nonnull"
+        derefAttr = "dereferenceable" "(" number ")"
         
         comment = ";" (~"\\n" any)* "\\n"?
-        space += comment
+        space += comment | "\\n" | "\\r" | "\\t" | " "
         intType = "i" digit+
         register = "%" (alnum | "_" | "." | "-")+
         globalName = "@" (alnum | "_" | "." | "-")+
         labelName = (alnum | "_" | "." | "-")+
-        labelNameOrNum = labelName | number
+        labelNameOrNum = labelName | number | "true" | "false"
         
-        number = hexNumber | decNumber
+        number = hexNumber | floatNumber | decNumber
         hexNumber = "-"? "0x" hexDigit+
+        floatNumber = "-"? digit+ "." digit+ ("e" ("+"|"-")? digit+)?
         decNumber = "-"? digit+
         
         bool = "true" | "false"
@@ -88,7 +136,9 @@ export const grammar = ohm.grammar(`
 
         Params = listOf<Param, ",">
         Param = Type RetAttr* register?
-        Attribute = attrNumeric | "nounwind" | "uwtable" | "noinline" | "optnone" | "mustprogress"
+        Attribute = attrNumeric | "nounwind" | "uwtable" | "noinline" | "optnone" | "mustprogress" | "sspstrong" | "sspreq" | "ssp" | "sync" | attrString | attrLabel
+        attrLabel = "#" labelName
+        attrString = "\\\"" (~"\\\"" any)* "\\\"" ("=" "\\\"" (~"\\\"" any)* "\\\"")?
         attrNumeric = "#" digit+
     }
 `);
@@ -103,18 +153,41 @@ export interface StackFrame {
 
 export class Simulator {
     functions: Record<string, FunctionDef>
+    globalVars: Record<string, GlobalDef>
+    globalPtrs: Record<string, number>
     callStack: StackFrame[]
     currentFrame: StackFrame
     memory: Record<number, number>
     logs: string[]
     isFinished: boolean
 
-    constructor(functions: Record<string, FunctionDef>) {
+    constructor(functions: Record<string, FunctionDef>, globalVars: Record<string, GlobalDef> = {}) {
         this.functions = functions;
+        this.globalVars = globalVars;
         this.memory = {};
         this.logs = [];
         this.isFinished = false;
         this.callStack = [];
+        this.globalPtrs = {};
+
+        let addr = 0x2000;
+        for (const [name, gdef] of Object.entries(this.globalVars)) {
+            this.globalPtrs[name] = addr;
+            if (Array.isArray(gdef.value)) {
+               for (let i=0; i<gdef.value.length; i++) {
+                   this.memory[addr + i*4] = gdef.value[i] || 0;
+               }
+               addr += Math.max(4, gdef.value.length * 4);
+            } else if (typeof gdef.value === 'string') {
+               for (let i=0; i<gdef.value.length; i++) {
+                   this.memory[addr + i*4] = gdef.value.charCodeAt(i);
+               }
+               addr += Math.max(4, gdef.value.length * 4);
+            } else {
+               this.memory[addr] = Number(gdef.value) || 0;
+               addr += 4;
+            }
+        }
 
         const mainFunc = functions['@main'] || Object.values(functions)[0];
         if (!mainFunc) {
@@ -132,8 +205,16 @@ export class Simulator {
 
     private resolve(operand: Operand): number {
         if (typeof operand === 'number') return operand;
-        if (typeof operand === 'string' && operand.startsWith('%')) {
-            return this.currentFrame.registers[operand] ?? 0;
+        if (Array.isArray(operand)) return 0;
+        if (typeof operand === 'string') {
+            if (operand === 'false') return 0;
+            if (operand === 'true') return 1;
+            if (operand.startsWith('%')) {
+                return this.currentFrame.registers[operand] ?? 0;
+            }
+            if (operand.startsWith('@')) {
+                return this.globalPtrs[operand] ?? 0x2000;
+            }
         }
         return 0;
     }
@@ -159,6 +240,62 @@ export class Simulator {
                     this.currentFrame.lastBlockLabel = inst.name;
                     break;
                 }
+                case 'UNREACHABLE': {
+                    this.logs.push(`[${this.currentFrame.funcName}] Unreachable executed.`);
+                    this.isFinished = true;
+                    break;
+                }
+                case 'SWITCH': {
+                    const cond = this.resolve(inst.cond);
+                    let target = inst.defaultLabel;
+                    for (const c of inst.cases) {
+                        if (this.resolve(c.val) === cond) {
+                            target = c.label;
+                            break;
+                        }
+                    }
+                    const labelIdx = this.findLabel(currentFunc, target);
+                    if (labelIdx !== -1) {
+                        this.currentFrame.lastBlockLabel = target;
+                        this.currentFrame.pc = labelIdx;
+                        this.logs.push(`[${this.currentFrame.funcName}] Switch branching to %${target}`);
+                        return inst.line;
+                    } else {
+                        throw new Error(`Label %${target} not found`);
+                    }
+                }
+                case 'FOP': {
+                    const v1 = this.resolve(inst.val1);
+                    const v2 = this.resolve(inst.val2);
+                    let res = 0; let opStr = '';
+                    if (inst.op === 'fadd') { res = v1 + v2; opStr = '+'; }
+                    else if (inst.op === 'fsub') { res = v1 - v2; opStr = '-'; }
+                    else if (inst.op === 'fmul') { res = v1 * v2; opStr = '*'; }
+                    else if (inst.op === 'fdiv') { res = v1 / v2; opStr = '/'; }
+                    else if (inst.op === 'frem') { res = v1 % v2; opStr = '%'; }
+                    this.currentFrame.registers[inst.dest] = res;
+                    this.logs.push(`[${this.currentFrame.funcName}] Calc float ${v1} ${opStr} ${v2} = ${res}`);
+                    break;
+                }
+                case 'FCMP': {
+                    const v1 = this.resolve(inst.val1);
+                    const v2 = this.resolve(inst.val2);
+                    let res = false; let opStr = '';
+                    switch (inst.cond) {
+                        case 'oeq': case 'ueq': res = v1 === v2; opStr = '=='; break;
+                        case 'one': case 'une': res = v1 !== v2; opStr = '!='; break;
+                        case 'ogt': case 'ugt': res = v1 > v2; opStr = '>'; break;
+                        case 'oge': case 'uge': res = v1 >= v2; opStr = '>='; break;
+                        case 'olt': case 'ult': res = v1 < v2; opStr = '<'; break;
+                        case 'ole': case 'ule': res = v1 <= v2; opStr = '<='; break;
+                        case 'true': res = true; opStr = 'true'; break;
+                        case 'false': res = false; opStr = 'false'; break;
+                        default: res = false; opStr = inst.cond; break;
+                    }
+                    this.currentFrame.registers[inst.dest] = res ? 1 : 0;
+                    this.logs.push(`[${this.currentFrame.funcName}] Float cmp ${v1} ${opStr} ${v2} -> ${res}`);
+                    break;
+                }
                 case 'PHI': {
                     const incoming = inst.incoming.find(inc =>
                         inc.label === this.currentFrame.lastBlockLabel ||
@@ -173,8 +310,7 @@ export class Simulator {
                 case 'ASSIGNMENT': {
                     const v1 = this.resolve(inst.val1);
                     const v2 = this.resolve(inst.val2);
-                    let res = 0;
-                    let opStr = '';
+                    let res = 0; let opStr = '';
                     if (inst.op === 'add') { res = v1 + v2; opStr = '+'; }
                     else if (inst.op === 'sub') { res = v1 - v2; opStr = '-'; }
                     else if (inst.op === 'mul') { res = v1 * v2; opStr = '*'; }
@@ -301,7 +437,7 @@ export class Simulator {
                     }
                     const argValues = inst.args.map(arg => this.resolve(arg));
                     this.pushFrame(inst.funcName, argValues, inst.dest);
-                    this.logs.push(`[${this.currentFrame.funcName}] Calling ${inst.funcName} with arguments: ${argValues.join(', ')}`);
+                    this.logs.push(`[${this.currentFrame.funcName}] Calling ${inst.funcName} with args: ${argValues.join(', ')}`);
                     return inst.line;
                 }
             }
@@ -355,109 +491,140 @@ export class Simulator {
     }
 }
 
+export function parse(code: string): ProgramAst {
+    const match = grammar.match(code);
+    if (match.failed()) {
+        throw new Error(match.message);
+    }
+    return semantics(match).parse();
+}
+
 export const semantics = grammar.createSemantics()
 
 semantics.addOperation<any>('parse', {
-    Program(funcs) {
-        const functionList = funcs.children.map(c => c.parse());
+    Program(entities) {
+        const entityList = entities.children.map(c => c.parse());
         const funcMap: Record<string, FunctionDef> = {};
-        functionList.forEach(f => {
-            funcMap[f.name] = f;
+        const globalMap: Record<string, GlobalDef> = {};
+        entityList.forEach(e => {
+            if (e && e.type === 'FUNCTION') {
+                funcMap[e.name] = e;
+            } else if (e && e.type === 'GLOBAL') {
+                globalMap[e.name] = e;
+            }
         });
-        return funcMap;
+        return { functions: funcMap, globalVars: globalMap };
     },
+    TopLevelEntity(entity) { return entity.parse(); },
     FunctionDef(_def, _retAttrs, _type, name, _lp, params, _rp, _attrs, _lb, body, _rb) {
         return {
+            type: 'FUNCTION',
             name: name.sourceString,
             params: params.parse(),
             instructions: body.children.map((c: any) => c.parse())
         };
     },
-    Instruction(inst) {
-        return inst.parse();
-    },
-    LabelDef(name, _colon) {
+    GlobalDef(name, _eq, _attrs, _kw, _type, val, _optComma, _optAlign1, _optAlign2) {
         return {
-            type: 'LABEL',
-            line: this.source.getLineAndColumn().lineNum,
-            name: name.sourceString
+            type: 'GLOBAL',
+            name: name.sourceString,
+            value: val.parse()
         };
+    },
+    GlobalValue(node) { return node.parse(); },
+    ArrayConst_c(_c, strLit) { return strLit.parse(); },
+    ArrayConst_arr(_lb, list, _rb) { return list.asIteration().children.map(c => c.parse()); },
+    TypeAndValue(_type, _attrs, val) { return val.parse(); },
+    stringLit(_q1, text, _q2) { return text.sourceString; },
+    TypeDef(node) { return node.parse(); },
+    TypeDefStruct(_reg, _eq, _type, _lb, _list, _rb) { return { type: 'TYPEDEF' }; },
+    TypeDefOpaque(_reg, _eq, _type, _opq) { return { type: 'TYPEDEF' }; },
+    TargetDef(_kw, _rest, _nl) { return { type: 'TARGET' }; },
+    DeclDef(_kw, _rest, _nl) { return { type: 'DECL' }; },
+    Unrecognized(_chars, _nl) { return null; },
+
+    Instruction(inst) { return inst.parse(); },
+    LabelDef(name, _colon) {
+        return { type: 'LABEL', line: this.source.getLineAndColumn().lineNum, name: name.sourceString };
+    },
+    UnreachableInst(_) { 
+        return { type: 'UNREACHABLE', line: this.source.getLineAndColumn().lineNum }; 
     },
     Assignment(dest, _eq, op, _kw, _type, val1, _comma, val2) {
         return {
-            type: 'ASSIGNMENT',
-            line: this.source.getLineAndColumn().lineNum,
-            dest: dest.sourceString,
-            op: op.sourceString,
-            val1: val1.parse(),
-            val2: val2.parse()
+            type: 'ASSIGNMENT', line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString, op: op.sourceString,
+            val1: val1.parse(), val2: val2.parse()
         };
+    },
+    FopInst(dest, _eq, op, _kw, _type, val1, _comma, val2) {
+        return {
+            type: 'FOP', line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString, op: op.sourceString,
+            val1: val1.parse(), val2: val2.parse()
+        }
     },
     IcmpInst(dest, _eq, _icmp, cond, _type, val1, _comma, val2) {
         return {
-            type: 'ICMP',
-            line: this.source.getLineAndColumn().lineNum,
-            dest: dest.sourceString,
-            cond: cond.sourceString,
-            val1: val1.parse(),
-            val2: val2.parse()
+            type: 'ICMP', line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString, cond: cond.sourceString,
+            val1: val1.parse(), val2: val2.parse()
         };
+    },
+    FcmpInst(dest, _eq, _fcmp, cond, _type, val1, _comma, val2) {
+        return {
+            type: 'FCMP', line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString, cond: cond.sourceString,
+            val1: val1.parse(), val2: val2.parse()
+        }
+    },
+    SwitchInst(_switch, _type, cond, _comma, _label, _pct, dl, _lb, cases, _rb) {
+        return {
+            type: 'SWITCH', line: this.source.getLineAndColumn().lineNum,
+            cond: cond.parse(), defaultLabel: dl.sourceString,
+            cases: cases.children.map(c => c.parse())
+        }
+    },
+    SwitchCase(_type, val, _comma, _label, _pct, target) {
+        return { val: val.parse(), label: target.sourceString };
     },
     BrInst_cond(_br, _i1, cond, _c1, _label1, _percent1, iftrue, _c2, _label2, _percent2, iffalse, _optComma) {
         return {
-            type: 'BR_COND',
-            line: this.source.getLineAndColumn().lineNum,
-            cond: cond.parse(),
-            iftrue: iftrue.sourceString,
-            iffalse: iffalse.sourceString
+            type: 'BR_COND', line: this.source.getLineAndColumn().lineNum,
+            cond: cond.parse(), iftrue: iftrue.sourceString, iffalse: iffalse.sourceString
         };
     },
     BrInst_uncond(_br, _label, _percent, dest, _optComma) {
         return {
-            type: 'BR_UNCOND',
-            line: this.source.getLineAndColumn().lineNum,
+            type: 'BR_UNCOND', line: this.source.getLineAndColumn().lineNum,
             dest: dest.sourceString
         };
     },
     AllocaInst(dest, _eq, _alloca, _type, _c, _ak, _an) {
-        return {
-            type: 'ALLOCA',
-            line: this.source.getLineAndColumn().lineNum,
-            dest: dest.sourceString
-        };
+        return { type: 'ALLOCA', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
     },
     StoreInst(_store, _kw, _type1, val, _comma, _type2, ptr, _optComma, _ak, _an) {
         return {
-            type: 'STORE',
-            line: this.source.getLineAndColumn().lineNum,
+            type: 'STORE', line: this.source.getLineAndColumn().lineNum,
             val: val.parse(),
             ptr: ptr.sourceString.replace('%', '') === 'ptr' || ptr.sourceString === 'null' ? ptr.sourceString : ptr.parse()
         };
     },
     LoadInst(dest, _eq, _load, _type1, _comma, _type2, ptr, _optComma, _ak, _an) {
         return {
-            type: 'LOAD',
-            line: this.source.getLineAndColumn().lineNum,
-            dest: dest.sourceString,
-            ptr: ptr.sourceString
+            type: 'LOAD', line: this.source.getLineAndColumn().lineNum,
+            dest: dest.sourceString, ptr: ptr.sourceString
         }
     },
     ReturnInst(_ret, _type, val) {
         const v = val.numChildren > 0 ? val.children[0].parse() : null;
-        return {
-            type: 'RET',
-            line: this.source.getLineAndColumn().lineNum,
-            val: v
-        }
+        return { type: 'RET', line: this.source.getLineAndColumn().lineNum, val: v }
     },
-    CallInst(dest, _eq, _call, _attrs, _type, name, _lp, params, _rp) {
+    CallInst(dest, _eq, _call, _k, _attrs, _type, name, _lp, params, _rp, _attr2) {
         const d = dest.numChildren > 0 ? dest.children[0].sourceString.replace('=', '').trim() : null;
         return {
-            type: 'CALL',
-            line: this.source.getLineAndColumn().lineNum,
-            dest: d,
-            funcName: name.sourceString,
-            args: params.parse()
+            type: 'CALL', line: this.source.getLineAndColumn().lineNum,
+            dest: d, funcName: name.sourceString, args: params.parse()
         }
     },
     PhiInst(dest, _eq, _phi, _type, incoming) {
@@ -480,9 +647,7 @@ semantics.addOperation<any>('parse', {
             indexes: _restOps.children.map(c => c.parse())
         };
     },
-    GepPtr(node) {
-        return node.sourceString;
-    },
+    GepPtr(node) { return node.sourceString; },
     SelectInst(dest, _eq, _select, _i1, cond, _c1, _t1, val1, _c2, _t2, val2) {
         return {
             type: 'SELECT', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString,
@@ -495,12 +660,8 @@ semantics.addOperation<any>('parse', {
             op: op.sourceString, val: val.parse()
         };
     },
-    CallParams(params) {
-        return params.asIteration().children.map(c => c.parse());
-    },
-    CallParam(_type, _attrs, val) {
-        return val.parse();
-    },
+    CallParams(params) { return params.asIteration().children.map(c => c.parse()); },
+    CallParam(_type, _attrs, val) { return val.parse(); },
 
     register(_percent, _chars) { return this.sourceString; },
     globalName(_at, _chars) { return this.sourceString; },
@@ -514,26 +675,15 @@ semantics.addOperation<any>('parse', {
         const val = parseInt(_digits.sourceString, 16);
         return _sign.sourceString === '-' ? -val : val;
     },
-    decNumber(_sign, _digits) {
-        return parseInt(this.sourceString, 10);
+    floatNumber(_sign, _int, _dot, _frac, _e, _esign, _edigit) {
+        return parseFloat(this.sourceString);
     },
+    decNumber(_sign, _digits) { return parseInt(this.sourceString, 10); },
     bool(val) { return val.sourceString === 'true' ? 1 : 0; },
     nullConst(_) { return 0; },
 
-    Params(params) {
-        return params.asIteration().children.map(c => c.parse());
-    },
-    Param(_type, _attrs, reg) {
-        return reg.numChildren > 0 ? reg.children[0].sourceString : "";
-    },
+    Params(params) { return params.asIteration().children.map(c => c.parse()); },
+    Param(_type, _attrs, reg) { return reg.numChildren > 0 ? reg.children[0].sourceString : ""; },
 
     _iter(...children) { return children.map(c => c.parse()); }
 })
-
-export function parse(code: string): Record<string, FunctionDef> {
-    const match = grammar.match(code);
-    if (match.failed()) {
-        throw new Error(match.message);
-    }
-    return semantics(match).parse();
-}
