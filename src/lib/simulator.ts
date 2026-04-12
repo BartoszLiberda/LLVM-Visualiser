@@ -21,6 +21,17 @@ export type Instruction =
     | { type: 'FOP'; line: number; dest: string; op: string; val1: Operand; val2: Operand }
     | { type: 'FCMP'; line: number; dest: string; cond: string; val1: Operand; val2: Operand }
     | { type: 'UNREACHABLE'; line: number; }
+    | { type: 'INVOKE'; line: number; dest: string | null; funcName: string; args: Operand[]; normalLabel: string; unwindLabel: string }
+    | { type: 'LANDINGPAD'; line: number; dest: string | null }
+    | { type: 'RESUME'; line: number; }
+    | { type: 'FREEZE'; line: number; dest: string; val: Operand }
+    | { type: 'FENCE'; line: number }
+    | { type: 'CMPXCHG'; line: number; dest: string; ptr: Operand; cmp: Operand; newval: Operand }
+    | { type: 'ATOMICRMW'; line: number; dest: string; op: string; ptr: Operand; val: Operand }
+    | { type: 'VA_ARG'; line: number; dest: string }
+    | { type: 'INDIRECTBR'; line: number }
+    | { type: 'EXTRACTVALUE'; line: number; dest: string; agg: Operand; indexes: number[] }
+    | { type: 'INSERTVALUE'; line: number; dest: string; agg: Operand; val: Operand; indexes: number[] }
 
 export interface GlobalDef {
     name: string;
@@ -42,9 +53,13 @@ export interface ProgramAst {
 export const grammar = ohm.grammar(`
     LLVM {
         Program = TopLevelEntity+
-        TopLevelEntity = FunctionDef | GlobalDef | TypeDef | TargetDef | DeclDef | Unrecognized
+        TopLevelEntity = FunctionDef | GlobalDef | TypeDef | TargetDef | DeclDef | AttributesDef | MetadataDef | ComdatDef | Unrecognized
         
         Unrecognized = (~("define" | globalName | register "=" "type" | "target" | "declare" | "attributes") any)* "\\n"
+        
+        AttributesDef = "attributes" (~"\\n" any)* "\\n"
+        MetadataDef = "!" (~"\\n" any)* "\\n"
+        ComdatDef = "$" (~"\\n" any)* "\\n"
         
         TargetDef = "target" (~"\\n" any)* "\\n"
         DeclDef = "declare" (~"\\n" any)* "\\n"
@@ -63,7 +78,35 @@ export const grammar = ohm.grammar(`
         TypeDefStruct = register "=" "type" "{" listOf<Type, ","> "}"
         TypeDefOpaque = register "=" "type" "opaque"
 
-        Instruction = LabelDef | Assignment | FopInst | AllocaInst | StoreInst | LoadInst | ReturnInst | IcmpInst | FcmpInst | BrInst | SwitchInst | CallInst | PhiInst | GepInst | SelectInst | ConversionInst | UnreachableInst
+        Instruction = InstBody InstMeta?
+        InstMeta = (","? metadataRef)*
+        metadataRef = "!" (alnum | "_" | "-" | ".")+
+
+        InstBody = LabelDef | Assignment | FopInst | AllocaInst | StoreInst | LoadInst | ReturnInst | IcmpInst | FcmpInst | BrInst | SwitchInst | CallInst | PhiInst | GepInst | SelectInst | ConversionInst | UnreachableInst | InvokeInst | LandingPadInst | ResumeInst | FreezeInst | FenceInst | CmpxchgInst | AtomicrmwInst | VaArgInst | IndirectBrInst | CallBrInst | CatchSwitchInst | CatchPadInst | CleanupPadInst | CatchRetInst | CleanupRetInst | ExtractValueInst | InsertValueInst
+
+        InvokeInst = (register "=")? "invoke" (Keyword)* RetAttr* Type globalName "(" CallParams ")" (Keyword | Attribute)* "to" "label" "%" labelNameOrNum "unwind" "label" "%" labelNameOrNum
+        LandingPadInst = register "=" "landingpad" (~"\\n" any)*
+        ResumeInst = "resume" (~"\\n" any)*
+        
+        FreezeInst = register "=" "freeze" Type Operand
+        FenceInst = "fence" (~"\\n" any)*
+        CmpxchgInst = register "=" "cmpxchg" (Keyword)* Type GepPtr "," Type Operand "," Type Operand (~"\\n" any)*
+        AtomicrmwInst = register "=" "atomicrmw" (Keyword)* AtomicOp Type GepPtr "," Type Operand (~"\\n" any)*
+        AtomicOp = "xchg" | "add" | "sub" | "and" | "nand" | "or" | "xor" | "max" | "min" | "umax" | "umin" | "fadd" | "fsub" | "fmax" | "fmin" | "uinc_wrap" | "udec_wrap"
+        VaArgInst = register "=" "va_arg" Type Operand "," Type
+        
+        IndirectBrInst = "indirectbr" Type Operand "," "[" (~"]" any)* "]"
+        CallBrInst = (register "=")? "callbr" (Keyword)* RetAttr* Type globalName "(" CallParams ")" (Keyword | Attribute)* "to" "label" "%" labelNameOrNum "[" (~"]" any)* "]"
+        
+        CatchSwitchInst = register "=" "catchswitch" (~"\\n" any)*
+        CatchPadInst = register "=" "catchpad" (~"\\n" any)*
+        CleanupPadInst = register "=" "cleanuppad" (~"\\n" any)*
+        CatchRetInst = "catchret" "from" Operand "to" "label" "%" labelNameOrNum
+        CleanupRetInst = "cleanupret" "from" Operand "unwind" "label" "%" labelNameOrNum -- label
+                       | "cleanupret" "from" Operand "unwind" "to" "caller" -- caller
+                       
+        ExtractValueInst = register "=" "extractvalue" Type Operand ("," number)+
+        InsertValueInst = register "=" "insertvalue" Type Operand "," Type Operand ("," number)+
 
         UnreachableInst = "unreachable"
 
@@ -97,7 +140,7 @@ export const grammar = ohm.grammar(`
         SelectInst = register "=" "select" "i1" Operand "," Type Operand "," Type Operand
         
         ConversionInst = register "=" ConversionOp Type Operand "to" Type
-        ConversionOp = "zext" | "sext" | "trunc" | "bitcast" | "ptrtoint" | "inttoptr" | "fptosi" | "fptoui" | "sitofp" | "uitofp" | "fptrunc" | "fpext"
+        ConversionOp = "zext" | "sext" | "trunc" | "bitcast" | "ptrtoint" | "inttoptr" | "fptosi" | "fptoui" | "sitofp" | "uitofp" | "fptrunc" | "fpext" | "addrspacecast"
 
         CallParams = listOf<CallParam, ",">
         CallParam = Type RetAttr* Operand
@@ -108,12 +151,14 @@ export const grammar = ohm.grammar(`
         CmpPredicate = "eq" | "ne" | "sgt" | "sge" | "slt" | "sle" | "ugt" | "uge" | "ult" | "ule"
         FcmpPredicate = "false" | "oeq" | "ogt" | "oge" | "olt" | "ole" | "one" | "ord" | "uno" | "ueq" | "ugt" | "uge" | "ult" | "ule" | "une" | "true"
         
-        Operand = register | globalName | number | bool | nullConst
+        Operand = ConstExpr | register | globalName | number | bool | nullConst | metadataRef
+        ConstExpr = "getelementptr" "inbounds"? "(" Type "," Type GepPtr ("," Type Operand)* ")" -- gep
+                  | "bitcast" "(" Type Operand "to" Type ")" -- bitcast
         
         Type = ArrayType | PointerType
         ArrayType = "[" number "x" Type "]"
         PointerType = typeBase "*"*
-        typeBase = intType | "float" | "double" | "fp128" | "x86_fp80" | "ptr" | "void" | "label" | register | "..."
+        typeBase = intType | "float" | "double" | "fp128" | "x86_fp80" | "ptr" | "void" | "label" | "metadata" | register | "..."
         
         RetAttr = derefAttr | "noundef" | "signext" | "zeroext" | "inreg" | "nocapture" | "readonly" | "nonnull"
         derefAttr = "dereferenceable" "(" number ")"
@@ -132,7 +177,7 @@ export const grammar = ohm.grammar(`
         decNumber = "-"? digit+
         
         bool = "true" | "false"
-        nullConst = "null"
+        nullConst = "null" | "undef" | "poison" | "none"
 
         Params = listOf<Param, ",">
         Param = Type RetAttr* register?
@@ -146,7 +191,7 @@ export const grammar = ohm.grammar(`
 export interface StackFrame {
     funcName: string;
     pc: number;
-    registers: Record<string, number>;
+    registers: Record<string, any>;
     destRegister: string | null;
     lastBlockLabel: string;
 }
@@ -243,6 +288,92 @@ export class Simulator {
                 case 'UNREACHABLE': {
                     this.logs.push(`[${this.currentFrame.funcName}] Unreachable executed.`);
                     this.isFinished = true;
+                    break;
+                }
+                case 'INVOKE': {
+                    const targetFunc = this.functions[inst.funcName];
+                    if (!targetFunc) throw new Error(`Function ${inst.funcName} not found`);
+                    
+                    const labelIdx = this.findLabel(currentFunc, inst.normalLabel);
+                    if (labelIdx !== -1) {
+                         this.currentFrame.pc = labelIdx - 1;
+                    } else {
+                        throw new Error(`Label %${inst.normalLabel} not found in ${this.currentFrame.funcName}`);
+                    }
+                    const argValues = inst.args.map(arg => this.resolve(arg));
+                    this.pushFrame(inst.funcName, argValues, inst.dest);
+                    this.logs.push(`[${this.currentFrame.funcName}] Invoking ${inst.funcName} with args: ${argValues.join(', ')}`);
+                    return inst.line;
+                }
+                case 'LANDINGPAD': {
+                    if (inst.dest) this.currentFrame.registers[inst.dest] = 0;
+                    this.logs.push(`[${this.currentFrame.funcName}] LandingPad triggered -> dummy value.`);
+                    break;
+                }
+                case 'RESUME': {
+                    this.logs.push(`[${this.currentFrame.funcName}] Resume called. Exception unwinding unhandled.`);
+                    this.isFinished = true;
+                    break;
+                }
+                case 'FREEZE': {
+                    this.currentFrame.registers[inst.dest] = this.resolve(inst.val);
+                    break;
+                }
+                case 'FENCE': {
+                    this.logs.push(`[${this.currentFrame.funcName}] Passed memory fence.`);
+                    break;
+                }
+                case 'CMPXCHG': {
+                    const ptr = this.resolve(inst.ptr);
+                    const cmp = this.resolve(inst.cmp);
+                    const oldVal = this.memory[ptr] ?? 0;
+                    const isSuccess = (oldVal === cmp);
+                    if (isSuccess) this.memory[ptr] = this.resolve(inst.newval);
+                    this.currentFrame.registers[inst.dest] = [oldVal, isSuccess ? 1 : 0];
+                    this.logs.push(`[${this.currentFrame.funcName}] cmpxchg 0x${ptr.toString(16)}: ${isSuccess ? 'success' : 'fail'}, obj: ${oldVal}`);
+                    break;
+                }
+                case 'ATOMICRMW': {
+                    const ptr = this.resolve(inst.ptr);
+                    const val = this.resolve(inst.val);
+                    const oldVal = this.memory[ptr] ?? 0;
+                    let newVal = oldVal;
+                    switch(inst.op) {
+                        case 'xchg': newVal = val; break;
+                        case 'add': newVal = oldVal + val; break;
+                        case 'sub': newVal = oldVal - val; break;
+                        case 'and': newVal = oldVal & val; break;
+                        case 'nand': newVal = ~(oldVal & val); break;
+                        case 'or': newVal = oldVal | val; break;
+                        case 'xor': newVal = oldVal ^ val; break;
+                        case 'max': case 'umax': newVal = Math.max(oldVal, val); break;
+                        case 'min': case 'umin': newVal = Math.min(oldVal, val); break;
+                    }
+                    this.memory[ptr] = newVal;
+                    this.currentFrame.registers[inst.dest] = oldVal;
+                    this.logs.push(`[${this.currentFrame.funcName}] atomicrmw ${inst.op} 0x${ptr.toString(16)} -> ${newVal}`);
+                    break;
+                }
+                case 'VA_ARG': {
+                    this.currentFrame.registers[inst.dest] = 0;
+                    break;
+                }
+                case 'INDIRECTBR': {
+                    throw new Error("INDIRECTBR blocks branch directly tracking not supported.");
+                }
+                case 'EXTRACTVALUE': {
+                    const agg = this.resolve(inst.agg);
+                    let res = agg;
+                    if (Array.isArray(agg)) res = agg[inst.indexes[0]] ?? 0;
+                    this.currentFrame.registers[inst.dest] = res;
+                    break;
+                }
+                case 'INSERTVALUE': {
+                    const agg = this.resolve(inst.agg);
+                    const val = this.resolve(inst.val);
+                    const newAgg = Array.isArray(agg) ? [...agg] : [];
+                    newAgg[inst.indexes[0]] = val;
+                    this.currentFrame.registers[inst.dest] = newAgg;
                     break;
                 }
                 case 'SWITCH': {
@@ -541,14 +672,82 @@ semantics.addOperation<any>('parse', {
     TypeDefOpaque(_reg, _eq, _type, _opq) { return { type: 'TYPEDEF' }; },
     TargetDef(_kw, _rest, _nl) { return { type: 'TARGET' }; },
     DeclDef(_kw, _rest, _nl) { return { type: 'DECL' }; },
+    AttributesDef(_kw, _rest, _nl) { return { type: 'ATTRIBUTES' }; },
+    MetadataDef(_excl, _rest, _nl) { return { type: 'METADATA' }; },
+    ComdatDef(_dollar, _rest, _nl) { return { type: 'COMDAT' }; },
     Unrecognized(_chars, _nl) { return null; },
 
-    Instruction(inst) { return inst.parse(); },
+    Instruction(body, _meta) { return body.parse(); },
+    InstBody(inst) { return inst.parse(); },
     LabelDef(name, _colon) {
         return { type: 'LABEL', line: this.source.getLineAndColumn().lineNum, name: name.sourceString };
     },
     UnreachableInst(_) { 
         return { type: 'UNREACHABLE', line: this.source.getLineAndColumn().lineNum }; 
+    },
+    InvokeInst(dest, _eq, _invoke, _k1, _ra, _type, name, _lp, params, _rp, _k2, _to, _l1, _p1, nLbl, _uw, _l2, _p2, eLbl) {
+        const d = dest.numChildren > 0 ? dest.children[0].sourceString.replace('=', '').trim() : null;
+        return {
+            type: 'INVOKE', line: this.source.getLineAndColumn().lineNum,
+            dest: d, funcName: name.sourceString, args: params.parse(),
+            normalLabel: nLbl.sourceString, unwindLabel: eLbl.sourceString
+        };
+    },
+    LandingPadInst(dest, _eq, _lp, _rest) {
+        return { type: 'LANDINGPAD', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    ResumeInst(_rs, _rest) {
+        return { type: 'RESUME', line: this.source.getLineAndColumn().lineNum };
+    },
+    FreezeInst(dest, _eq, _freeze, _t, val) {
+        return { type: 'FREEZE', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, val: val.parse() };
+    },
+    FenceInst(_fence, _rest) {
+        return { type: 'FENCE', line: this.source.getLineAndColumn().lineNum };
+    },
+    CmpxchgInst(dest, _eq, _cmpxchg, _k, _t1, ptr, _c1, _t2, cmp, _c2, _t3, newval, _rest) {
+        return { type: 'CMPXCHG', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, ptr: ptr.parse(), cmp: cmp.parse(), newval: newval.parse() };
+    },
+    AtomicrmwInst(dest, _eq, _atomic, _k, op, _t1, ptr, _c1, _t2, val, _rest) {
+        return { type: 'ATOMICRMW', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, op: op.sourceString, ptr: ptr.parse(), val: val.parse() };
+    },
+    VaArgInst(dest, _eq, _va, _t1, op, _c1, _t2) {
+         return { type: 'VA_ARG', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    IndirectBrInst(_ibr, _t1, op, _c1, _lb, _rest, _rb) {
+         return { type: 'INDIRECTBR', line: this.source.getLineAndColumn().lineNum };
+    },
+    CallBrInst(dest, _eq, _callbr, _k1, _ra, _t, name, _lp, params, _rp, _k2, _to, _lbl, _pct, nLbl, _lb, _rest, _rb) {
+        const d = dest.numChildren > 0 ? dest.children[0].sourceString.replace('=', '').trim() : null;
+        return {
+            type: 'INVOKE', line: this.source.getLineAndColumn().lineNum,
+            dest: d, funcName: name.sourceString, args: params.parse(),
+            normalLabel: nLbl.sourceString, unwindLabel: nLbl.sourceString
+        };
+    },
+    CatchSwitchInst(dest, _eq, _cs, _rest) {
+        return { type: 'LANDINGPAD', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    CatchPadInst(dest, _eq, _cp, _rest) {
+        return { type: 'LANDINGPAD', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    CleanupPadInst(dest, _eq, _cp, _rest) {
+        return { type: 'LANDINGPAD', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    CatchRetInst(_cr, _from, op, _to, _lbl, _pct, dest) {
+        return { type: 'BR_UNCOND', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    CleanupRetInst_label(_cr, _from, op, _uw, _lbl, _pct, dest) {
+        return { type: 'BR_UNCOND', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+    },
+    CleanupRetInst_caller(_cr, _f, _op, _uw, _to, _clr) {
+        return { type: 'RET', line: this.source.getLineAndColumn().lineNum, val: null };
+    },
+    ExtractValueInst(dest, _eq, _ev, _t, agg, _c, indexes) {
+        return { type: 'EXTRACTVALUE', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, agg: agg.parse(), indexes: indexes.children.map(c => c.parse()) };
+    },
+    InsertValueInst(dest, _eq, _iv, _t1, agg, _c1, _t2, val, _c2, indexes) {
+        return { type: 'INSERTVALUE', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, agg: agg.parse(), val: val.parse(), indexes: indexes.children.map(c => c.parse()) };
     },
     Assignment(dest, _eq, op, _kw, _type, val1, _comma, val2) {
         return {
@@ -681,6 +880,16 @@ semantics.addOperation<any>('parse', {
     decNumber(_sign, _digits) { return parseInt(this.sourceString, 10); },
     bool(val) { return val.sourceString === 'true' ? 1 : 0; },
     nullConst(_) { return 0; },
+    
+    Operand(node) { return node.parse(); },
+    ConstExpr(node) { return node.parse(); },
+    ConstExpr_gep(_gep, _ib, _lp, _t1, _c1, _t2, ptr, _restC, _restT, _restOps, _rp) {
+        return ptr.parse();
+    },
+    ConstExpr_bitcast(_bc, _lp, _t1, val, _to, _t2, _rp) {
+        return val.parse();
+    },
+    metadataRef(_bang, _chars) { return this.sourceString; },
 
     Params(params) { return params.asIteration().children.map(c => c.parse()); },
     Param(_type, _attrs, reg) { return reg.numChildren > 0 ? reg.children[0].sourceString : ""; },

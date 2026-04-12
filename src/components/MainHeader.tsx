@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FolderGit, FileText, Upload, Eraser, MessageSquare } from "lucide-react";
+import { FolderGit, FileText, Upload, Eraser, MessageSquare, BookOpen } from "lucide-react";
 import {
   Menubar,
   MenubarContent,
@@ -23,7 +23,55 @@ interface MainHeaderProps {
   setShowSource: (show: boolean) => void;
   showIR: boolean;
   setShowIR: (show: boolean) => void;
+  onExampleSelect: (code: string) => void;
 }
+
+const EXAMPLES = {
+  c: [
+    {
+      name: "Basic Variable Arithmetic",
+      code: `int main() {\n    int a = 10;\n    int b = 20;\n    int sum = a + b;\n    return sum;\n}`
+    },
+    {
+      name: "Structs and Pointers",
+      code: `struct Point {\n    int x;\n    int y;\n};\n\nint main() {\n    struct Point p;\n    p.x = 10;\n    p.y = 20;\n    int area = p.x * p.y;\n    return area;\n}`
+    },
+    {
+      name: "Conditionals & Logic",
+      code: `int max(int a, int b) {\n    if (a > b) return a;\n    return b;\n}\n\nint main() {\n    return max(42, 17);\n}`
+    },
+    {
+      name: "Floating Point Operations",
+      code: `int main() {\n    float a = 3.14f;\n    float b = 2.0f;\n    float result = a * b;\n    return (int)result;\n}`
+    },
+    {
+      name: "State Machine (Switch)",
+      code: `int process(int val) {\n    switch (val) {\n        case 1: return 10;\n        case 2: return 20;\n        default: return 0;\n    }\n}\n\nint main() {\n    return process(2);\n}`
+    }
+  ],
+  cpp: [
+    {
+      name: "Function Calls & Return Values",
+      code: `int add(int a, int b) {\n    return a + b;\n}\n\nint main() {\n    return add(10, 20);\n}`
+    },
+    {
+      name: "Recursion (Factorial)",
+      code: `int factorial(int n) {\n    if (n <= 1) return 1;\n    return n * factorial(n - 1);\n}\n\nint main() {\n    return factorial(5);\n}`
+    },
+    {
+      name: "Iteration (For Loop)",
+      code: `int main() {\n    int sum = 0;\n    for (int i = 0; i < 5; i++) {\n        sum += i;\n    }\n    return sum;\n}`
+    },
+    {
+      name: "Floating Point Operations",
+      code: `int main() {\n    float a = 3.14f;\n    float b = 2.0f;\n    float result = a * b;\n    return static_cast<int>(result);\n}`
+    },
+    {
+      name: "State Machine (Switch)",
+      code: `int process(int val) {\n    switch (val) {\n        case 1: return 10;\n        case 2: return 20;\n        default: return 0;\n    }\n}\n\nint main() {\n    return process(2);\n}`
+    }
+  ]
+};
 
 export function MainHeader({
   onUpload,
@@ -33,7 +81,8 @@ export function MainHeader({
   showSource,
   setShowSource,
   showIR,
-  setShowIR
+  setShowIR,
+  onExampleSelect
 }: MainHeaderProps) {
   const { theme, setTheme } = useTheme();
 
@@ -56,6 +105,17 @@ export function MainHeader({
           <MenubarContent>
             <MenubarItem onClick={onUpload}><Upload />Upload</MenubarItem>
             <MenubarItem onClick={onClear}><Eraser />Clear</MenubarItem>
+          </MenubarContent>
+        </MenubarMenu>
+        <MenubarMenu>
+          <MenubarTrigger>Examples</MenubarTrigger>
+          <MenubarContent>
+            {EXAMPLES[language].map((example, idx) => (
+              <MenubarItem key={idx} onClick={() => onExampleSelect(example.code)}>
+                <BookOpen className="w-4 h-4 mr-2" />
+                {example.name}
+              </MenubarItem>
+            ))}
           </MenubarContent>
         </MenubarMenu>
         <MenubarMenu>

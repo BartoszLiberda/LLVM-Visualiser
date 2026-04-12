@@ -142,6 +142,7 @@ export default function Home() {
         setShowSource={setShowSource}
         showIR={showIR}
         setShowIR={setShowIR}
+        onExampleSelect={(code) => setInputCode(code)}
       />
 
       <Separator className="mt-5 shrink-0" />
