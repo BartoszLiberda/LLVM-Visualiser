@@ -32,8 +32,8 @@ export function SimulationControls({
 }: SimulationControlsProps) {
 
   return (
-    <div className="flex flex-col xl:flex-row justify-between items-center p-6 md:p-8 shrink-0 gap-6">
-      <div className="flex flex-wrap justify-center gap-3 md:gap-5 w-full xl:w-auto">
+    <div id="tour-controls" className="flex flex-col lg:flex-row justify-between items-center px-4 md:px-6 py-3 md:py-4 shrink-0 gap-3 md:gap-4">
+      <div className="flex flex-wrap justify-center gap-2 md:gap-3 w-full lg:w-auto">
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -105,10 +105,10 @@ export function SimulationControls({
 
       </div>
 
-      <div className="flex flex-col xl:flex-row justify-center items-center gap-4 w-full flex-1 xl:justify-end">
-        <div className="flex h-10 items-center justify-between gap-3 rounded-md border bg-background px-4 shadow-xs w-full xl:w-auto shrink-0">
+      <div className="flex flex-col lg:flex-row justify-center items-center gap-3 w-full flex-1 lg:justify-end">
+        <div className="flex h-9 items-center justify-between gap-2 rounded-md border bg-background px-3 shadow-xs w-full lg:w-auto shrink-0">
           <span className="text-sm font-medium flex items-center gap-1.5 whitespace-nowrap text-foreground select-none"><Zap size={14} className="text-muted-foreground" />Speed</span>
-          <div className="w-24 flex items-center">
+          <div className="w-20 flex items-center">
               <Slider
                   value={[1000 - runSpeed]}
                   min={0}
@@ -118,14 +118,14 @@ export function SimulationControls({
                   className="cursor-grab"
               />
           </div>
-          <span className="text-xs font-medium w-[45px] text-right text-muted-foreground select-none">{runSpeed}ms</span>
+          <span className="text-xs font-medium w-[42px] text-right text-muted-foreground select-none">{runSpeed}ms</span>
         </div>
 
-        <div className="flex h-10 items-center justify-between gap-3 rounded-md border bg-background px-4 shadow-xs w-full flex-1">
+        <div className="flex h-9 items-center justify-between gap-2 rounded-md border bg-background px-3 shadow-xs w-full flex-1">
           <span className="text-sm font-medium flex items-center gap-1.5 whitespace-nowrap text-foreground select-none">
             <GitCommitHorizontal size={14} className="text-muted-foreground" />Step
           </span>
-          <div className="flex-1 flex items-center min-w-0">
+          <div className="flex-1 flex items-center min-w-0 mx-2">
               <Slider
                   value={[stepCount]}
                   min={0}
@@ -135,7 +135,7 @@ export function SimulationControls({
                   className="cursor-grab"
               />
           </div>
-          <span className="text-xs font-medium w-[60px] whitespace-nowrap text-right text-muted-foreground select-none">{stepCount} / {maxSteps}</span>
+          <span className="text-xs font-medium w-[56px] whitespace-nowrap text-right text-muted-foreground select-none">{stepCount} / {maxSteps}</span>
         </div>
       </div>
     </div>

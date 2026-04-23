@@ -1,5 +1,16 @@
 import * as ohm from "ohm-js"
 
+export class UnsupportedInstructionError extends Error {
+    constructor(public readonly instrType: string, detail?: string) {
+        super(
+            `Unsupported instruction: '${instrType}'.` +
+            (detail ? ` ${detail}` : '') +
+            ` This simulator only supports a subset of LLVM IR — try simplifying your code or avoiding this construct.`
+        );
+        this.name = 'UnsupportedInstructionError';
+    }
+}
+
 export type Operand = any
 
 export type Instruction =
@@ -14,10 +25,10 @@ export type Instruction =
     | { type: 'LABEL'; line: number; name: string }
     | { type: 'CALL'; line: number; dest: string | null; funcName: string; args: Operand[] }
     | { type: 'PHI'; line: number; dest: string; incoming: { val: Operand; label: string }[] }
-    | { type: 'GEP'; line: number; dest: string; ptr: Operand; indexes: Operand[] }
+    | { type: 'GEP'; line: number; dest: string; ptr: Operand; indexes: Operand[]; baseType: string }
     | { type: 'SELECT'; line: number; dest: string; cond: Operand; val1: Operand; val2: Operand }
-    | { type: 'CONVERSION'; line: number; dest: string; op: string; val: Operand }
-    | { type: 'SWITCH'; line: number; cond: Operand; defaultLabel: string; cases: {val: Operand; label: string}[] }
+    | { type: 'CONVERSION'; line: number; dest: string; op: string; val: Operand; fromType: string; toType: string }
+    | { type: 'SWITCH'; line: number; cond: Operand; defaultLabel: string; cases: { val: Operand; label: string }[] }
     | { type: 'FOP'; line: number; dest: string; op: string; val1: Operand; val2: Operand }
     | { type: 'FCMP'; line: number; dest: string; cond: string; val1: Operand; val2: Operand }
     | { type: 'UNREACHABLE'; line: number; }
@@ -55,14 +66,14 @@ export const grammar = ohm.grammar(`
         Program = TopLevelEntity+
         TopLevelEntity = FunctionDef | GlobalDef | TypeDef | TargetDef | DeclDef | AttributesDef | MetadataDef | ComdatDef | Unrecognized
         
-        Unrecognized = (~("define" | globalName | register "=" "type" | "target" | "declare" | "attributes") any)* "\\n"
+        Unrecognized = (~("define" | globalName | register "=" "type" | "target" | "declare" | "attributes") any)+ ("\\n" | end)
         
-        AttributesDef = "attributes" (~"\\n" any)* "\\n"
-        MetadataDef = "!" (~"\\n" any)* "\\n"
-        ComdatDef = "$" (~"\\n" any)* "\\n"
+        AttributesDef = "attributes" (~"\\n" any)* ("\\n" | end)
+        MetadataDef = "!" (~"\\n" any)* ("\\n" | end)
+        ComdatDef = "$" (~"\\n" any)* ("\\n" | end)
         
-        TargetDef = "target" (~"\\n" any)* "\\n"
-        DeclDef = "declare" (~"\\n" any)* "\\n"
+        TargetDef = "target" (~"\\n" any)* ("\\n" | end)
+        DeclDef = "declare" (~"\\n" any)* ("\\n" | end)
         
         FunctionDef = "define" RetAttr* Type globalName "(" Params ")" Attribute* "{" Instruction* "}"
 
@@ -160,8 +171,9 @@ export const grammar = ohm.grammar(`
         PointerType = typeBase "*"*
         typeBase = intType | "float" | "double" | "fp128" | "x86_fp80" | "ptr" | "void" | "label" | "metadata" | register | "..."
         
-        RetAttr = derefAttr | "noundef" | "signext" | "zeroext" | "inreg" | "nocapture" | "readonly" | "nonnull"
-        derefAttr = "dereferenceable" "(" number ")"
+        RetAttr = DerefAttr | AlignAttr | "noundef" | "signext" | "zeroext" | "inreg" | "nocapture" | "readonly" | "nonnull" | "noalias" | "writeonly" | "immarg" | "byval" | "sret" | "nest" | "returned"
+        DerefAttr = "dereferenceable" "(" number ")"
+        AlignAttr = "align" number
         
         comment = ";" (~"\\n" any)* "\\n"?
         space += comment | "\\n" | "\\r" | "\\t" | " "
@@ -205,6 +217,7 @@ export class Simulator {
     memory: Record<number, number>
     logs: string[]
     isFinished: boolean
+    stackPtr: number
 
     constructor(functions: Record<string, FunctionDef>, globalVars: Record<string, GlobalDef> = {}) {
         this.functions = functions;
@@ -214,29 +227,30 @@ export class Simulator {
         this.isFinished = false;
         this.callStack = [];
         this.globalPtrs = {};
+        this.stackPtr = 0x7000;
 
         let addr = 0x2000;
         for (const [name, gdef] of Object.entries(this.globalVars)) {
             this.globalPtrs[name] = addr;
             if (Array.isArray(gdef.value)) {
-               for (let i=0; i<gdef.value.length; i++) {
-                   this.memory[addr + i*4] = gdef.value[i] || 0;
-               }
-               addr += Math.max(4, gdef.value.length * 4);
+                for (let i = 0; i < gdef.value.length; i++) {
+                    this.memory[addr + i * 4] = gdef.value[i] || 0;
+                }
+                addr += Math.max(4, gdef.value.length * 4);
             } else if (typeof gdef.value === 'string') {
-               for (let i=0; i<gdef.value.length; i++) {
-                   this.memory[addr + i*4] = gdef.value.charCodeAt(i);
-               }
-               addr += Math.max(4, gdef.value.length * 4);
+                for (let i = 0; i < gdef.value.length; i++) {
+                    this.memory[addr + i * 4] = gdef.value.charCodeAt(i);
+                }
+                addr += Math.max(4, gdef.value.length * 4);
             } else {
-               this.memory[addr] = Number(gdef.value) || 0;
-               addr += 4;
+                this.memory[addr] = Number(gdef.value) || 0;
+                addr += 4;
             }
         }
 
         const mainFunc = functions['@main'] || Object.values(functions)[0];
         if (!mainFunc) {
-            throw new Error("No functions found to execute");
+            throw new Error("No executable functions found. Make sure your LLVM IR defines at least one function body (not just 'declare').");
         }
 
         this.currentFrame = {
@@ -246,6 +260,10 @@ export class Simulator {
             destRegister: null,
             lastBlockLabel: "entry"
         };
+    }
+
+    private log(msg: string) {
+        this.logs.push(`[${this.currentFrame.funcName}#${this.callStack.length}] ${msg}`);
     }
 
     private resolve(operand: Operand): number {
@@ -286,32 +304,38 @@ export class Simulator {
                     break;
                 }
                 case 'UNREACHABLE': {
-                    this.logs.push(`[${this.currentFrame.funcName}] Unreachable executed.`);
+                    this.log(`⚠ 'unreachable' instruction reached — the compiler determined this path should never execute. Halting simulation.`);
                     this.isFinished = true;
                     break;
                 }
                 case 'INVOKE': {
                     const targetFunc = this.functions[inst.funcName];
-                    if (!targetFunc) throw new Error(`Function ${inst.funcName} not found`);
-                    
+                    if (!targetFunc) {
+                        throw new Error(
+                            `Cannot invoke '${inst.funcName}' — function body not found. ` +
+                            `External/library functions (e.g. printf, malloc) are not supported by this simulator. ` +
+                            `Try replacing calls to standard library functions with your own implementations.`
+                        );
+                    }
+
                     const labelIdx = this.findLabel(currentFunc, inst.normalLabel);
                     if (labelIdx !== -1) {
-                         this.currentFrame.pc = labelIdx - 1;
+                        this.currentFrame.pc = labelIdx - 1;
                     } else {
-                        throw new Error(`Label %${inst.normalLabel} not found in ${this.currentFrame.funcName}`);
+                        throw new Error(`Branch target label '%${inst.normalLabel}' not found in function '${this.currentFrame.funcName}'. The IR may be malformed.`);
                     }
                     const argValues = inst.args.map(arg => this.resolve(arg));
+                    this.log(`Invoking ${inst.funcName} with args: ${argValues.join(', ')}`);
                     this.pushFrame(inst.funcName, argValues, inst.dest);
-                    this.logs.push(`[${this.currentFrame.funcName}] Invoking ${inst.funcName} with args: ${argValues.join(', ')}`);
                     return inst.line;
                 }
                 case 'LANDINGPAD': {
                     if (inst.dest) this.currentFrame.registers[inst.dest] = 0;
-                    this.logs.push(`[${this.currentFrame.funcName}] LandingPad triggered -> dummy value.`);
+                    this.log(`⚠ landingpad reached (C++ exception handling). Exception semantics are not simulated; continuing with a dummy value.`);
                     break;
                 }
                 case 'RESUME': {
-                    this.logs.push(`[${this.currentFrame.funcName}] Resume called. Exception unwinding unhandled.`);
+                    this.log(`⚠ 'resume' instruction reached — C++ exception re-throw is not supported by this simulator. Halting.`);
                     this.isFinished = true;
                     break;
                 }
@@ -320,7 +344,7 @@ export class Simulator {
                     break;
                 }
                 case 'FENCE': {
-                    this.logs.push(`[${this.currentFrame.funcName}] Passed memory fence.`);
+                    this.log(`Passed memory fence.`);
                     break;
                 }
                 case 'CMPXCHG': {
@@ -330,7 +354,7 @@ export class Simulator {
                     const isSuccess = (oldVal === cmp);
                     if (isSuccess) this.memory[ptr] = this.resolve(inst.newval);
                     this.currentFrame.registers[inst.dest] = [oldVal, isSuccess ? 1 : 0];
-                    this.logs.push(`[${this.currentFrame.funcName}] cmpxchg 0x${ptr.toString(16)}: ${isSuccess ? 'success' : 'fail'}, obj: ${oldVal}`);
+                    this.log(`cmpxchg 0x${ptr.toString(16)}: ${isSuccess ? 'success' : 'fail'}, obj: ${oldVal}`);
                     break;
                 }
                 case 'ATOMICRMW': {
@@ -338,7 +362,7 @@ export class Simulator {
                     const val = this.resolve(inst.val);
                     const oldVal = this.memory[ptr] ?? 0;
                     let newVal = oldVal;
-                    switch(inst.op) {
+                    switch (inst.op) {
                         case 'xchg': newVal = val; break;
                         case 'add': newVal = oldVal + val; break;
                         case 'sub': newVal = oldVal - val; break;
@@ -351,15 +375,16 @@ export class Simulator {
                     }
                     this.memory[ptr] = newVal;
                     this.currentFrame.registers[inst.dest] = oldVal;
-                    this.logs.push(`[${this.currentFrame.funcName}] atomicrmw ${inst.op} 0x${ptr.toString(16)} -> ${newVal}`);
+                    this.log(`atomicrmw ${inst.op} 0x${ptr.toString(16)} -> ${newVal}`);
                     break;
                 }
                 case 'VA_ARG': {
                     this.currentFrame.registers[inst.dest] = 0;
+                    this.log(`⚠ 'va_arg' is not supported (variadic arguments). Returning 0 as a placeholder.`);
                     break;
                 }
                 case 'INDIRECTBR': {
-                    throw new Error("INDIRECTBR blocks branch directly tracking not supported.");
+                    throw new UnsupportedInstructionError('indirectbr', 'Indirect branches (computed gotos) cannot be tracked by this simulator.');
                 }
                 case 'EXTRACTVALUE': {
                     const agg = this.resolve(inst.agg);
@@ -387,12 +412,12 @@ export class Simulator {
                     }
                     const labelIdx = this.findLabel(currentFunc, target);
                     if (labelIdx !== -1) {
+                        this.log(`Switch branching to %${target}`);
                         this.currentFrame.lastBlockLabel = target;
                         this.currentFrame.pc = labelIdx;
-                        this.logs.push(`[${this.currentFrame.funcName}] Switch branching to %${target}`);
                         return inst.line;
                     } else {
-                        throw new Error(`Label %${target} not found`);
+                        throw new Error(`Switch target label '%${target}' not found in function '${this.currentFrame.funcName}'. The IR may be malformed.`);
                     }
                 }
                 case 'FOP': {
@@ -405,7 +430,7 @@ export class Simulator {
                     else if (inst.op === 'fdiv') { res = v1 / v2; opStr = '/'; }
                     else if (inst.op === 'frem') { res = v1 % v2; opStr = '%'; }
                     this.currentFrame.registers[inst.dest] = res;
-                    this.logs.push(`[${this.currentFrame.funcName}] Calc float ${v1} ${opStr} ${v2} = ${res}`);
+                    this.log(`Calc float ${v1} ${opStr} ${v2} = ${res}`);
                     break;
                 }
                 case 'FCMP': {
@@ -424,7 +449,7 @@ export class Simulator {
                         default: res = false; opStr = inst.cond; break;
                     }
                     this.currentFrame.registers[inst.dest] = res ? 1 : 0;
-                    this.logs.push(`[${this.currentFrame.funcName}] Float cmp ${v1} ${opStr} ${v2} -> ${res}`);
+                    this.log(`Float cmp ${v1} ${opStr} ${v2} -> ${res}`);
                     break;
                 }
                 case 'PHI': {
@@ -435,19 +460,22 @@ export class Simulator {
                     );
                     const val = incoming ? this.resolve(incoming.val) : 0;
                     this.currentFrame.registers[inst.dest] = val;
-                    this.logs.push(`[${this.currentFrame.funcName}] PHI: selected ${val} from block ${this.currentFrame.lastBlockLabel}`);
+                    this.log(`PHI: selected ${val} from block ${this.currentFrame.lastBlockLabel}`);
                     break;
                 }
                 case 'ASSIGNMENT': {
                     const v1 = this.resolve(inst.val1);
                     const v2 = this.resolve(inst.val2);
+                    if (v2 === 0 && ['sdiv', 'udiv', 'srem', 'urem'].includes(inst.op)) {
+                        throw new Error(`Division by zero detected in '${inst.op}' (${v1} / 0). Check your source code for a potential division-by-zero bug.`);
+                    }
                     let res = 0; let opStr = '';
                     if (inst.op === 'add') { res = v1 + v2; opStr = '+'; }
                     else if (inst.op === 'sub') { res = v1 - v2; opStr = '-'; }
                     else if (inst.op === 'mul') { res = v1 * v2; opStr = '*'; }
                     else if (inst.op === 'sdiv') { res = Math.trunc(v1 / v2); opStr = '/'; }
-                    else if (inst.op === 'udiv') { res = Math.floor(Math.abs(v1) / Math.abs(v2)); opStr = '/'; }
-                    else if (inst.op === 'urem') { res = Math.abs(v1) % Math.abs(v2); opStr = '%'; }
+                    else if (inst.op === 'udiv') { res = Math.trunc((v1 >>> 0) / (v2 >>> 0)); opStr = '/'; }
+                    else if (inst.op === 'urem') { res = (v1 >>> 0) % (v2 >>> 0); opStr = '%'; }
                     else if (inst.op === 'srem') { res = v1 % v2; opStr = '%'; }
                     else if (inst.op === 'shl') { res = v1 << v2; opStr = '<<'; }
                     else if (inst.op === 'lshr') { res = v1 >>> v2; opStr = '>>'; }
@@ -456,57 +484,72 @@ export class Simulator {
                     else if (inst.op === 'or') { res = v1 | v2; opStr = '|'; }
                     else if (inst.op === 'xor') { res = v1 ^ v2; opStr = '^'; }
                     this.currentFrame.registers[inst.dest] = res;
-                    this.logs.push(`[${this.currentFrame.funcName}] Calculated ${v1} ${opStr} ${v2} = ${res} (stored in ${inst.dest})`);
+                    this.log(`Calculated ${v1} ${opStr} ${v2} = ${res} (stored in ${inst.dest})`);
                     break;
                 }
                 case 'GEP': {
                     const base = this.resolve(inst.ptr);
                     let offset = 0;
+                    let stepSize = 4;
+                    if (inst.baseType === 'i8') stepSize = 1;
+                    else if (inst.baseType === 'i64' || inst.baseType === 'double' || inst.baseType === 'ptr' || inst.baseType?.includes('*')) stepSize = 8;
+
                     for (const idx of inst.indexes) {
-                        offset += this.resolve(idx) * 4;
+                        offset += this.resolve(idx) * stepSize;
                     }
                     const res = base + offset;
                     this.currentFrame.registers[inst.dest] = res;
-                    this.logs.push(`[${this.currentFrame.funcName}] GEP: 0x${base.toString(16)} + offset -> 0x${res.toString(16)}`);
+                    this.log(`GEP: 0x${base.toString(16)} + offset -> 0x${res.toString(16)}`);
                     break;
                 }
                 case 'SELECT': {
                     const cond = this.resolve(inst.cond);
                     const res = cond !== 0 ? this.resolve(inst.val1) : this.resolve(inst.val2);
                     this.currentFrame.registers[inst.dest] = res;
-                    this.logs.push(`[${this.currentFrame.funcName}] Select: ${cond !== 0 ? 'true' : 'false'} -> ${res}`);
+                    this.log(`Select: ${cond !== 0 ? 'true' : 'false'} -> ${res}`);
                     break;
                 }
                 case 'CONVERSION': {
-                    const val = this.resolve(inst.val);
+                    let val = this.resolve(inst.val);
+                    if (inst.op === 'trunc') {
+                        if (inst.toType === 'i8') val = val & 0xFF;
+                        else if (inst.toType === 'i16') val = val & 0xFFFF;
+                        else if (inst.toType === 'i32') val = val & 0xFFFFFFFF;
+                        else if (inst.toType === 'i1') val = val & 0x1;
+                    }
+                    else if (inst.op === 'sext') {
+                        if (inst.fromType === 'i8') val = (val << 24) >> 24;
+                        else if (inst.fromType === 'i16') val = (val << 16) >> 16;
+                    }
                     this.currentFrame.registers[inst.dest] = val;
-                    this.logs.push(`[${this.currentFrame.funcName}] ${inst.op.toUpperCase()}: ${val} -> ${inst.dest}`);
+                    this.log(`${inst.op.toUpperCase()}: ${val} -> ${inst.dest}`);
                     break;
                 }
                 case 'ALLOCA': {
-                    const addr = 0x7000 + (Object.keys(this.memory).length * 16);
+                    const addr = this.stackPtr;
+                    this.stackPtr += 64; // Reserve enough space for arrays/structs
                     this.memory[addr] = 0;
                     this.currentFrame.registers[inst.dest] = addr;
-                    this.logs.push(`[${this.currentFrame.funcName}] Allocated ${inst.dest} at 0x${addr.toString(16)}`)
+                    this.log(`Allocated ${inst.dest} at 0x${addr.toString(16)}`)
                     break;
                 }
                 case 'STORE': {
                     const val = this.resolve(inst.val);
                     const ptr = this.resolve(inst.ptr);
                     this.memory[ptr] = val;
-                    this.logs.push(`[${this.currentFrame.funcName}] Stored ${val} at 0x${ptr.toString(16)}`)
+                    this.log(`Stored ${val} at 0x${ptr.toString(16)}`)
                     break;
                 }
                 case 'LOAD': {
                     const ptr = this.resolve(inst.ptr);
                     const val = this.memory[ptr] ?? 0;
                     this.currentFrame.registers[inst.dest] = val;
-                    this.logs.push(`[${this.currentFrame.funcName}] Loaded ${val} from 0x${ptr.toString(16)} (into ${inst.dest})`);
+                    this.log(`Loaded ${val} from 0x${ptr.toString(16)} (into ${inst.dest})`);
                     break;
                 }
                 case 'RET': {
                     const val = inst.val !== null ? this.resolve(inst.val) : 0;
-                    this.logs.push(`[${this.currentFrame.funcName}] Returning with value: ${val}`);
+                    this.log(`Returning with value: ${val}`);
                     if (this.callStack.length > 0) {
                         this.popFrame(val);
                         return inst.line;
@@ -528,13 +571,13 @@ export class Simulator {
                         case 'sge': res = v1 >= v2; opStr = '>='; break;
                         case 'slt': res = v1 < v2; opStr = '<'; break;
                         case 'sle': res = v1 <= v2; opStr = '<='; break;
-                        case 'ugt': res = v1 > v2; opStr = '>'; break;
-                        case 'uge': res = v1 >= v2; opStr = '>='; break;
-                        case 'ult': res = v1 < v2; opStr = '<'; break;
-                        case 'ule': res = v1 <= v2; opStr = '<='; break;
+                        case 'ugt': res = (v1 >>> 0) > (v2 >>> 0); opStr = '>'; break;
+                        case 'uge': res = (v1 >>> 0) >= (v2 >>> 0); opStr = '>='; break;
+                        case 'ult': res = (v1 >>> 0) < (v2 >>> 0); opStr = '<'; break;
+                        case 'ule': res = (v1 >>> 0) <= (v2 >>> 0); opStr = '<='; break;
                     }
                     this.currentFrame.registers[inst.dest] = res ? 1 : 0;
-                    this.logs.push(`[${this.currentFrame.funcName}] Compared ${v1} ${opStr} ${v2} -> ${res} (stored in ${inst.dest})`);
+                    this.log(`Compared ${v1} ${opStr} ${v2} -> ${res} (stored in ${inst.dest})`);
                     break;
                 }
                 case 'BR_COND': {
@@ -542,38 +585,74 @@ export class Simulator {
                     const target = condVal !== 0 ? inst.iftrue : inst.iffalse;
                     const labelIdx = this.findLabel(currentFunc, target);
                     if (labelIdx !== -1) {
+                        this.log(`Branching to %${target}`);
                         this.currentFrame.lastBlockLabel = target;
                         this.currentFrame.pc = labelIdx;
-                        this.logs.push(`[${this.currentFrame.funcName}] Branching to %${target}`);
                         return inst.line;
                     } else {
-                        throw new Error(`Label %${target} not found`);
+                        throw new Error(`Conditional branch target label '%${target}' not found in '${this.currentFrame.funcName}'. The IR may be malformed.`);
                     }
                 }
                 case 'BR_UNCOND': {
                     const labelIdx = this.findLabel(currentFunc, inst.dest);
                     if (labelIdx !== -1) {
+                        this.log(`Branching to %${inst.dest}`);
                         this.currentFrame.lastBlockLabel = inst.dest;
                         this.currentFrame.pc = labelIdx;
-                        this.logs.push(`[${this.currentFrame.funcName}] Branching to %${inst.dest}`);
                         return inst.line;
                     } else {
-                        throw new Error(`Label %${inst.dest} not found`);
+                        throw new Error(`Unconditional branch target label '%${inst.dest}' not found in '${this.currentFrame.funcName}'. The IR may be malformed.`);
                     }
                 }
                 case 'CALL': {
+                    if (inst.funcName.startsWith('@llvm.memcpy')) {
+                        const dst = this.resolve(inst.args[0]);
+                        const src = this.resolve(inst.args[1]);
+                        const size = this.resolve(inst.args[2]);
+
+                        const keysToCopy = Object.keys(this.memory)
+                            .map(Number)
+                            .filter(k => k >= src && k < src + size);
+
+                        for (const k of keysToCopy) {
+                            const offset = k - src;
+                            this.memory[dst + offset] = this.memory[k];
+                        }
+
+                        this.log(`Intrinsic: memcpy 0x${src.toString(16)} -> 0x${dst.toString(16)} (${size} bytes)`);
+                        break;
+                    }
+
+                    if (inst.funcName.startsWith('@llvm.memset')) {
+                        const dst = this.resolve(inst.args[0]);
+                        const val = this.resolve(inst.args[1]);
+                        const size = this.resolve(inst.args[2]);
+
+                        for (let i = 0; i < size; i++) {
+                            this.memory[dst + i] = val;
+                        }
+
+                        this.log(`Intrinsic: memset 0x${dst.toString(16)} with ${val} (${size} bytes)`);
+                        break;
+                    }
+
                     const targetFunc = this.functions[inst.funcName];
                     if (!targetFunc) {
-                        throw new Error(`Function ${inst.funcName} not found`);
+                        throw new Error(
+                            `Cannot call '${inst.funcName}' — function body not found. ` +
+                            `External and standard library functions (e.g. printf, malloc, std::cout) are not supported. ` +
+                            `Try replacing standard library calls with your own equivalent logic.`
+                        );
                     }
                     const argValues = inst.args.map(arg => this.resolve(arg));
+                    this.log(`Calling ${inst.funcName} with args: ${argValues.join(', ')}`);
                     this.pushFrame(inst.funcName, argValues, inst.dest);
-                    this.logs.push(`[${this.currentFrame.funcName}] Calling ${inst.funcName} with args: ${argValues.join(', ')}`);
                     return inst.line;
                 }
             }
         } catch (e: any) {
-            this.logs.push(`Error: ${e.message}`);
+            const prefix = e instanceof UnsupportedInstructionError ? '⛔ Unsupported' : '💥 Runtime Error';
+            this.logs.push(`${prefix}: ${e.message}`);
             this.isFinished = true;
         }
 
@@ -682,8 +761,8 @@ semantics.addOperation<any>('parse', {
     LabelDef(name, _colon) {
         return { type: 'LABEL', line: this.source.getLineAndColumn().lineNum, name: name.sourceString };
     },
-    UnreachableInst(_) { 
-        return { type: 'UNREACHABLE', line: this.source.getLineAndColumn().lineNum }; 
+    UnreachableInst(_) {
+        return { type: 'UNREACHABLE', line: this.source.getLineAndColumn().lineNum };
     },
     InvokeInst(dest, _eq, _invoke, _k1, _ra, _type, name, _lp, params, _rp, _k2, _to, _l1, _p1, nLbl, _uw, _l2, _p2, eLbl) {
         const d = dest.numChildren > 0 ? dest.children[0].sourceString.replace('=', '').trim() : null;
@@ -712,10 +791,10 @@ semantics.addOperation<any>('parse', {
         return { type: 'ATOMICRMW', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, op: op.sourceString, ptr: ptr.parse(), val: val.parse() };
     },
     VaArgInst(dest, _eq, _va, _t1, op, _c1, _t2) {
-         return { type: 'VA_ARG', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
+        return { type: 'VA_ARG', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString };
     },
     IndirectBrInst(_ibr, _t1, op, _c1, _lb, _rest, _rb) {
-         return { type: 'INDIRECTBR', line: this.source.getLineAndColumn().lineNum };
+        return { type: 'INDIRECTBR', line: this.source.getLineAndColumn().lineNum };
     },
     CallBrInst(dest, _eq, _callbr, _k1, _ra, _t, name, _lp, params, _rp, _k2, _to, _lbl, _pct, nLbl, _lb, _rest, _rb) {
         const d = dest.numChildren > 0 ? dest.children[0].sourceString.replace('=', '').trim() : null;
@@ -843,7 +922,7 @@ semantics.addOperation<any>('parse', {
     GepInst(dest, _eq, _gep, _ib, _t1, _c, _t2, ptr, _restCommas, _restTypes, _restOps) {
         return {
             type: 'GEP', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString, ptr: ptr.parse(),
-            indexes: _restOps.children.map(c => c.parse())
+            indexes: _restOps.children.map(c => c.parse()), baseType: _t1.sourceString
         };
     },
     GepPtr(node) { return node.sourceString; },
@@ -856,7 +935,9 @@ semantics.addOperation<any>('parse', {
     ConversionInst(dest, _eq, op, _t1, val, _to, _t2) {
         return {
             type: 'CONVERSION', line: this.source.getLineAndColumn().lineNum, dest: dest.sourceString,
-            op: op.sourceString, val: val.parse()
+            op: op.sourceString, val: val.parse(),
+            fromType: _t1.sourceString,
+            toType: _t2.sourceString
         };
     },
     CallParams(params) { return params.asIteration().children.map(c => c.parse()); },
@@ -880,7 +961,7 @@ semantics.addOperation<any>('parse', {
     decNumber(_sign, _digits) { return parseInt(this.sourceString, 10); },
     bool(val) { return val.sourceString === 'true' ? 1 : 0; },
     nullConst(_) { return 0; },
-    
+
     Operand(node) { return node.parse(); },
     ConstExpr(node) { return node.parse(); },
     ConstExpr_gep(_gep, _ib, _lp, _t1, _c1, _t2, ptr, _restC, _restT, _restOps, _rp) {

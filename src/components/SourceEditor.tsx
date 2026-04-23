@@ -22,12 +22,12 @@ export function SourceEditor({
   const theme = resolvedTheme === "light" ? "vs" : "vs-dark";
 
   return (
-    <div className="p-5 h-full">
-      <div className="flex items-center justify-between ml-2 mb-1">
+    <div className="flex flex-col p-3 md:p-4 h-full min-h-0">
+      <div id="tour-source-header" className="flex items-center justify-between ml-2 mb-1">
         <h1 className="flex items-center gap-2"><FileCodeCorner size={16} />{language === "c" ? "C" : "C++"}</h1>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Info size={16} className="text-muted-foreground" />
+            <Info size={16} className="text-muted-foreground cursor-help hover:text-foreground transition-colors" />
           </TooltipTrigger>
           <TooltipContent>
             Input C++ or C code here manually or by dragging and dropping a file, then press compile to see the LLVM.
@@ -36,7 +36,7 @@ export function SourceEditor({
       </div>
       <Editor
         className="p-1"
-        height="98%"
+        height="100%"
         theme={theme}
         language={language}
         value={inputCode}

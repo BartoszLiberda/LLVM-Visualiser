@@ -21,28 +21,89 @@ setInterval(() => {
 }, RATE_LIMIT_WINDOW_MS)
 
 function cleanupIR(ir: string): string {
-    return ir
-        .split('\n')
-        .map(line => {
-            // Strip trailing LLVM metadata like `, !dbg !12` but don't break string literals containing `!`
-            let l = line.replace(/,?\s*![a-zA-Z_].*$/, '').trim()
-            l = l.replace(/\s+(nsw|nuw|exact)/g, '')
-            l = l.replace(/\s+(dso_local|local_unnamed_addr|mustprogress|noinline|nounwind|optnone|uwtable)/g, '')
-            return l
-        })
-        .filter(line => {
-            const l = line.trim()
-            if (!l) return false
-            if (l.startsWith('source_filename')) return false
-            if (l.startsWith('target datalayout')) return false
-            if (l.startsWith('target triple')) return false
-            if (l.startsWith('attributes #')) return false
-            if (l.startsWith('!')) return false
-            if (l.startsWith(';')) return false
-            return true
-        })
-        .join('\n')
-        .trim()
+    let lines = ir.split('\n');
+    let processed: string[] = [];
+
+    // Pass 1: Clean up and filter
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        
+        // Strip trailing LLVM metadata
+        line = line.replace(/,?\s*![a-zA-Z_].*$/, '');
+        line = line.replace(/\s+(nsw|nuw|exact)/g, '');
+        line = line.replace(/\s+(dso_local|local_unnamed_addr|mustprogress|noinline|nounwind|optnone|uwtable)/g, '');
+        
+        let l = line.trim();
+        
+        // Skip unwanted boilerplate lines and original blank lines
+        if (!l) continue;
+        if (l.startsWith('source_filename')) continue;
+        if (l.startsWith('target datalayout')) continue;
+        if (l.startsWith('target triple')) continue;
+        if (l.startsWith('attributes #')) continue;
+        if (l.startsWith('!')) continue;
+        if (l.startsWith(';')) continue;
+        
+        processed.push(line);
+    }
+    
+    // Pass 2: Re-inject meaningful blank lines and enforce indentation
+    let formatted: string[] = [];
+    let inDefine = false;
+
+    for (let i = 0; i < processed.length; i++) {
+        let line = processed[i];
+        let trimmed = line.trim();
+        
+        // Global variables and declarations
+        if (trimmed.startsWith('@') || trimmed.startsWith('declare ')) {
+            formatted.push(trimmed);
+            continue;
+        }
+
+        // Functions
+        if (trimmed.startsWith('define ')) {
+            inDefine = true;
+            if (formatted.length > 0 && formatted[formatted.length - 1] !== '') {
+                formatted.push('');
+            }
+            formatted.push(trimmed); // define on its own line, no indent
+            continue;
+        }
+        
+        // End of functions
+        if (trimmed === '}') {
+            inDefine = false;
+            formatted.push(trimmed);
+            if (i < processed.length - 1) {
+                formatted.push(''); // Add blank line after function ends
+            }
+            continue;
+        }
+
+        // Basic block labels (must start at column 0 in clang output)
+        const isLabel = /^[a-zA-Z_$.\-0-9]+:/.test(line);
+        if (isLabel) {
+            // Add a blank line before labels, but not right after the 'define' line
+            if (formatted.length > 0) {
+                const prev = formatted[formatted.length - 1].trim();
+                if (prev !== '' && !prev.startsWith('define ') && prev !== '{') {
+                    formatted.push('');
+                }
+            }
+            formatted.push(trimmed); // Labels are not indented
+            continue;
+        }
+        
+        // Normal instructions
+        if (inDefine) {
+            formatted.push('  ' + trimmed); // Enforce exactly 2 spaces indent
+        } else {
+            formatted.push(trimmed);
+        }
+    }
+    
+    return formatted.join('\n').trim();
 }
 
 export async function POST(req: Request) {
@@ -51,6 +112,21 @@ export async function POST(req: Request) {
 
     if (!code || typeof code !== 'string') {
         return NextResponse.json({ error: 'No code provided' }, { status: 400 })
+    }
+
+    // Reject code that uses #include — this simulator does not support external libraries.
+    // Standard library functions (printf, malloc, std::cout, etc.) will compile to
+    // 'declare' stubs in the IR that the simulator cannot execute.
+    const includeMatch = code.match(/^\s*#include\s*[<"].+[">]/m);
+    if (includeMatch) {
+        return NextResponse.json({
+            error:
+                `Import detected: '${includeMatch[0].trim()}'. ` +
+                `This simulator does not support #include directives or external library calls. ` +
+                `Standard library functions (e.g. printf, malloc, std::cout) compile to external declarations ` +
+                `that cannot be executed. Please remove all #include statements and implement any needed ` +
+                `logic directly in your code.`
+        }, { status: 422 })
     }
 
     // Origin Check Mitigation (Basic)

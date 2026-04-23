@@ -1,7 +1,6 @@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Badge } from "@/components/ui/badge"
-import { getBadgeColorFromHash } from "@/lib/utils"
+import { getTextColorFromHash } from "@/lib/utils"
 
 interface RegisterViewProps {
     registers: Record<string, number>
@@ -38,17 +37,8 @@ export default function RegisterView({ registers }: RegisterViewProps) {
                                     <TableCell className="w-1/2 font-mono font-medium">
                                         {reg.name}
                                     </TableCell>
-                                    <TableCell className="w-1/2 flex items-center gap-2 font-mono">
-                                        {reg.value >= 0x7000 ? (
-                                            <>
-                                                <Badge variant="outline" className={`text-[10px] px-1 py-0 border-transparent ${getBadgeColorFromHash(reg.value.toString(16))}`}>
-                                                    PTR
-                                                </Badge>
-                                                0x{reg.value.toString(16)}
-                                            </>
-                                        ) : (
-                                            reg.value
-                                        )}
+                                    <TableCell className={`w-1/2 font-mono ${reg.value >= 0x7000 ? getTextColorFromHash(reg.value.toString(16)) : ''}`}>
+                                        {reg.value >= 0x7000 ? `0x${reg.value.toString(16)}` : reg.value}
                                     </TableCell>
                                 </TableRow>
                             ))
